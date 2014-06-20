@@ -1,0 +1,361 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+
+    "Description": "Alerta",
+
+    "Parameters": {
+
+        "KeyName": {
+            "Description": "Name of an existing EC2 KeyPair for SSH access",
+            "Type": "String"
+        },
+        "Stage": {
+            "Description": "Stage",
+            "Type": "String",
+            "Default": "PROD",
+            "AllowedValues": [ "PROD", "CODE" ],
+            "ConstraintDescription": "must be a valid stage eg. PROD, CODE"
+        },
+        "AlertaCapacity": {
+            "Description": "Application Autoscale Size",
+            "Type": "Number",
+            "Default": "1",
+            "MinValue": 1,
+            "MaxValue": 4
+        },
+        "AlertaInstanceType": {
+            "Description": "Application EC2 instance type",
+            "Type": "String",
+            "Default": "t1.micro",
+            "AllowedValues": [
+                "t1.micro",
+                "m1.small",
+                "m3.medium",
+                "m3.large",
+                "m3.xlarge",
+                "m3.2xlarge"
+            ],
+            "ConstraintDescription": "must be a valid EC2 instance type"
+        },
+         "MongoDBCapacity": {
+            "Description": "MongoDB Autoscale Size",
+            "Type": "Number",
+            "Default": "3",
+            "MinValue": 1,
+            "MaxValue": 9
+        },
+        "MongoDBInstanceType": {
+            "Description": "MongoDB EC2 instance type",
+            "Type": "String",
+            "Default": "m3.large",
+            "AllowedValues": [
+                "t1.micro",
+                "m1.small",
+                "m3.medium",
+                "m3.large",
+                "m3.xlarge",
+                "m3.2xlarge"
+            ],
+            "ConstraintDescription": "must be a valid EC2 instance type"
+        },
+        "MongoDBUsername": {
+            "Description": "Username for the MongoDB Alerta database",
+            "Type": "String",
+            "MinLength": "1",
+            "MaxLength": "16",
+            "AllowedPattern": "[a-zA-Z0-9]+",
+            "ConstraintDescription": "must only contain alphanumeric characters"
+        },
+        "MongoDBPassword": {
+            "NoEcho": true,
+            "Description": "Password for the MongoDB Alerta database",
+            "Type": "String",
+            "MinLength": "1",
+            "MaxLength": "16",
+            "AllowedPattern": "[a-zA-Z0-9]+",
+            "ConstraintDescription": "must only contain alphanumeric characters"
+        }
+    },
+
+    "Resources": {
+
+        "AlertaLoadBalancer": {
+            "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+            "Properties": {
+                "AvailabilityZones": { "Fn::GetAZs": "" },
+                "CrossZone": true,
+                "Listeners": [
+                    {
+                        "Protocol": "HTTP",
+                        "LoadBalancerPort": "80",
+                        "InstancePort": "8080"
+                    }
+                ],
+                "HealthCheck": {
+                    "Target": "HTTP:8080/_",
+                    "Timeout": "5",
+                    "Interval": "10",
+                    "UnhealthyThreshold": "10",
+                    "HealthyThreshold": "2"
+                }
+            }
+
+        },
+
+        "AlertaAutoscalingGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "AvailabilityZones": { "Fn::GetAZs": "" },
+                "LaunchConfigurationName": { "Ref": "AlertaLaunchConfig" },
+                "MinSize": "1",
+                "MaxSize": "4",
+                "DesiredCapacity": { "Ref": "AlertaCapacity" },
+                "HealthCheckType": "ELB",
+                "HealthCheckGracePeriod": 300,
+                "LoadBalancerNames": [ { "Ref": "AlertaLoadBalancer" } ],
+                "Tags": [
+                    {
+                        "Key": "Stage",
+                        "Value": { "Ref": "Stage" },
+                        "PropagateAtLaunch": "true"
+                    },
+                    {
+                        "Key": "Stack",
+                        "Value": { "Ref": "AWS::StackName" },
+                        "PropagateAtLaunch": "true"
+                    },
+                    {
+                        "Key": "App",
+                        "Value": "api",
+                        "PropagateAtLaunch": "true"
+                    },
+                    {
+                        "Key": "Name",
+                        "Value": { "Fn::Join":[ "-", [ { "Ref": "AWS::StackName" }, "api" ] ] },
+                        "PropagateAtLaunch": "true"
+                    }
+                ]
+            }
+        },
+
+        "AlertaLaunchConfig": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Properties": {
+                "ImageId": "ami-cb4986bc",
+                "SecurityGroups": [ { "Ref": "AlertaSecurityGroup" } ],
+                "InstanceType": { "Ref": "AlertaInstanceType" },
+                "KeyName": { "Ref": "KeyName" },
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [ "\n", [
+                            "#!/bin/bash -v",
+
+                            "apt-get -y install python-setuptools python-pip build-essential python-dev python-virtualenv",
+                            "apt-get -y install mongodb-server rabbitmq-server apache2 libapache2-mod-wsgi",
+
+                            "echo \"smallfiles = true\" | tee -a /etc/mongodb.conf",
+                            "service mongodb restart",
+
+                            "pip install alerta-app",
+
+                            "wget -qO /etc/apache2/sites-available/alerta https://raw.githubusercontent.com/guardian/alerta/master/etc/httpd-alerta.conf",
+                            "mkdir -p /opt/alerta/apache",
+                            "wget -qO /opt/alerta/apache/app.wsgi https://raw.githubusercontent.com/guardian/alerta/master/alerta/app/app.wsgi",
+                            "a2ensite alerta",
+
+                            "echo \"ServerName localhost\" >> /etc/apache2/apache2.conf",
+                            "service apache2 reload",
+
+                            "cd /var/www",
+                            "rm -Rf alerta*",
+                            "curl -L https://github.com/alerta/angular-alerta-webui/tarball/master | tar xz",
+                            "mv alerta-angular-alerta-webui-*/app/ alerta"
+                        ] ]
+                    }
+                }
+            }
+        },
+
+        "AlertaSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "SSH and HTTP",
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "http",
+                        "FromPort": "8080",
+                        "ToPort": "8080",
+                        "SourceSecurityGroupName": "amazon-elb-sg",
+                        "SourceSecurityGroupOwnerId": "amazon-elb"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "22",
+                        "ToPort": "22",
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ]
+            }
+        },
+
+        "MongoDBLoadBalancer": {
+            "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+            "Properties": {
+                "AvailabilityZones": { "Fn::GetAZs": "" },
+                "CrossZone": true,
+                "Listeners": [
+                    {
+                        "Protocol": "TCP",
+                        "LoadBalancerPort": "27017",
+                        "InstancePort": "27017"
+                    }
+                ],
+                "HealthCheck": {
+                    "Target": "TCP:27017",
+                    "Timeout": "10",
+                    "Interval": "20",
+                    "UnhealthyThreshold": "10",
+                    "HealthyThreshold": "2"
+                }
+            }
+        },
+
+        "MongoDBAutoscalingGroup": {
+            "Type": "AWS::AutoScaling::AutoScalingGroup",
+            "Properties": {
+                "AvailabilityZones": { "Fn::GetAZs": "" },
+                "LaunchConfigurationName": { "Ref": "MongoDBLaunchConfig" },
+                "MinSize": "1",
+                "MaxSize": "9",
+                "DesiredCapacity": { "Ref": "MongoDBCapacity" },
+                "HealthCheckType": "ELB",
+                "HealthCheckGracePeriod": 3600,
+                "LoadBalancerNames": [ { "Ref": "MongoDBLoadBalancer" } ],
+                "Tags": [
+                    {
+                        "Key": "Stage",
+                        "Value": { "Ref": "Stage" },
+                        "PropagateAtLaunch": "true"
+                    },
+                    {
+                        "Key": "Stack",
+                        "Value": { "Ref": "AWS::StackName" },
+                        "PropagateAtLaunch": "true"
+                    },
+                    {
+                        "Key": "App",
+                        "Value": "mongodb",
+                        "PropagateAtLaunch": "true"
+                    },
+                    {
+                        "Key": "Name",
+                        "Value": { "Fn::Join":[ "-", [ { "Ref": "AWS::StackName" }, "mongodb" ] ] },
+                        "PropagateAtLaunch": "true"
+                    }
+                ]
+            }
+        },
+
+        "MongoDBLaunchConfig": {
+            "Type": "AWS::AutoScaling::LaunchConfiguration",
+            "Properties": {
+                "ImageId": "ami-cb4986bc",
+                "SecurityGroups": [ { "Ref": "MongoDBSecurityGroup" } ],
+                "InstanceType": { "Ref": "MongoDBInstanceType" },
+                "KeyName": { "Ref": "KeyName" },
+                "IamInstanceProfile": { "Ref": "InstanceProfile" },
+
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [ "\n", [
+                            "#!/bin/bash -v",
+
+                            "wget -O - http://packages.elasticsearch.org/GPG-KEY-elasticsearch | apt-key add -",
+                            "echo \"deb http://packages.elasticsearch.org/logstash/1.4/debian stable main\" > /etc/apt/sources.list.d/logstash.list",
+                            "echo \"deb http://packages.elasticsearch.org/elasticsearch/1.1/debian stable main\" > /etc/apt/sources.list.d/elasticsearch.list",
+
+                            "apt-get -y update",
+                            "apt-get -y install language-pack-en openjdk-7-jre-headless logstash elasticsearch nginx",
+
+                            "wget -O /etc/logstash/conf.d/logstash-indexer.conf https://raw.githubusercontent.com/satterly/elk-stack/master/config/logstash-indexer.conf",
+
+                            { "Fn::Join": [ "", [ "sed -i",
+                                " -e 's,@@ELASTICSEARCH,", { "Fn::GetAtt": [ "ElasticsearchLoadBalancer", "DNSName" ]}, ",g'",
+                                " /etc/logstash/conf.d/logstash-indexer.conf" ] ] },
+
+                            "/usr/share/elasticsearch/bin/plugin --install elasticsearch/elasticsearch-cloud-aws/2.1.1",
+                            "/usr/share/elasticsearch/bin/plugin --install mobz/elasticsearch-head",
+                            "/usr/share/elasticsearch/bin/plugin --install lukas-vlcek/bigdesk",
+                            "/usr/share/elasticsearch/bin/plugin --install karmi/elasticsearch-paramedic",
+                            "/usr/share/elasticsearch/bin/plugin --install royrusso/elasticsearch-HQ",
+
+                            "wget -O /etc/elasticsearch/elasticsearch.yml https://raw.githubusercontent.com/satterly/elk-stack/master/config/elasticsearch.yml",
+                            { "Fn::Join": [ "", [ "sed -i",
+                                " -e 's,@@REGION,", { "Ref": "AWS::Region" }, ",g'",
+                                " /etc/elasticsearch/elasticsearch.yml" ] ] },
+
+                            "wget -O /etc/init/elasticsearch.conf https://raw.githubusercontent.com/satterly/elk-stack/master/config/upstart-elasticsearch.conf",
+
+                            "umount /mnt",
+                            "mkdir -m 000 /data",
+                            "mount /dev/xvdb /data",
+
+                            "sysctl vm.overcommit_memory=1",
+
+                            "cd /usr/share/nginx/html",
+                            "wget http://download.elasticsearch.org/kibana/kibana/kibana-latest.tar.gz",
+                            "tar zxvf kibana-latest.tar.gz",
+                            "mv kibana-latest kibana",
+
+                            "rm /etc/nginx/sites-enabled/default",
+                            "mv nginx-sites.conf /etc/nginx/sites-enabled",
+
+                            "start logstash",
+                            "start elasticsearch",
+                            "start nginx"
+                        ] ]
+                    }
+                }
+            }
+        },
+
+        "MongoDBSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "SSH and MongoDB",
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "27017",
+                        "ToPort": "27017",
+                        "SourceSecurityGroupName": "amazon-elb-sg",
+                        "SourceSecurityGroupOwnerId": "amazon-elb"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "22",
+                        "ToPort": "22",
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ]
+            }
+        },
+        "MongoDBSecurityGroupIngress": {
+            "Type": "AWS::EC2::SecurityGroupIngress",
+            "Properties": {
+                "GroupName": { "Ref": "MongoDBSecurityGroup" },
+                "IpProtocol": "tcp",
+                "FromPort": "27017",
+                "ToPort": "27017",
+                "SourceSecurityGroupName": { "Ref": "MongoDBSecurityGroup"}
+            }
+        }
+    },
+
+    "Outputs": {
+        "AlertaURL": {
+            "Value": { "Fn::Join": ["", ["http://", { "Fn::GetAtt": [ "AlertaLoadBalancer", "DNSName" ]}, "/"]] },
+            "Description": "URL for the Alerta Dashboard"
+        }
+    }
+}

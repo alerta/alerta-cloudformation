@@ -1,0 +1,222 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "Alerta single instance",
+
+  "Parameters" : {
+
+    "KeyName": {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "255",
+      "AllowedPattern" : "[\\x20-\\x7E]*",
+      "ConstraintDescription" : "can contain only ASCII characters"
+    },
+
+    "InstanceType" : {
+      "Description" : "Alerta EC2 instance type",
+      "Type" : "String",
+      "Default" : "m1.small",
+      "AllowedValues" : [
+        "t1.micro",
+        "m1.small",
+        "m1.medium",
+        "m1.large",
+        "m1.xlarge",
+        "m2.xlarge",
+        "m2.2xlarge",
+        "m2.4xlarge",
+        "m3.xlarge",
+        "m3.2xlarge",
+        "c1.medium",
+        "c1.xlarge",
+        "cc1.4xlarge",
+        "cc2.8xlarge",
+        "cg1.4xlarge"
+      ],
+      "ConstraintDescription" : "must be a valid EC2 instance type."
+    },
+
+    "DBUsername": {
+      "Default": "alerta",
+      "Description" : "Username for the MongoDB Alerta database",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "16",
+      "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters"
+    },
+
+    "DBPassword": {
+      "Default": "admin",
+      "NoEcho": "true",
+      "Description" : "Password for the MongoDB Alerta database",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "41",
+      "AllowedPattern" : "[a-zA-Z0-9]+",
+      "ConstraintDescription" : "must contain only alphanumeric characters"
+    },
+
+    "SSHLocation" : {
+      "Description" : "The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
+    }
+  },
+
+  "Mappings" : {
+    "AWSRegion2AMI" : {
+      "us-east-1" :      { "id" : "ami-408c7f28" },
+      "us-west-1" :      { "id" : "ami-a26265e7" },
+      "us-west-2" :      { "id" : "ami-f34032c3" },
+      "eu-west-1" :      { "id" : "ami-cb4986bc" },
+      "sa-east-1"      : { "id" : "ami-8f0aa692" },
+      "ap-southeast-1" : { "id" : "ami-506d3102" },
+      "ap-northeast-1" : { "id" : "ami-19dd9218" }
+    }
+  },
+
+  "Resources" : {
+
+    "AlertaServer": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "config" : {
+            "packages" : {
+              "apt" : {
+                "apache2"             : [],
+                "libapache2-mod-wsgi" : [],
+                "mongodb-server"      : []
+              },
+              "python": {
+                "alerta-app" : []
+              }
+            },
+
+            "sources" : {
+              "/var/www/html/alerta" : "https://github.com/alerta/angular-alerta-webui/tarball/master"
+            },
+
+            "files" : {
+              "/etc/apache2/conf-available/alerta-web.conf" : {
+                "content": { "Fn::Join" : ["", [
+                  "RedirectMatch ^/$ /alerta/\n"
+                  "RedirectMatch ^/alerta/?$ /alerta/app/\n"
+                ]]}
+              },
+              "/etc/apache2/sites-available/alerta.conf" : {
+                "content": { "Fn::Join" : ["", [
+                  "Listen 8080\n",
+                  "<VirtualHost *:8080>\n",
+                  "\tWSGIDaemonProcess alerta processes=5 threads=5\n",
+                  "\tWSGIScriptAlias / /var/www/html/alerta.wsgi\n",
+                  "\t<Directory /var/www/html>\n",
+                  "\t\tWSGIApplicationGroup %{GLOBAL}\n",
+                  "\t\tRequire all granted\n",
+                  "\t</Directory>\n",
+                  "</VirtualHost>\n"
+                ]]}
+              },
+              "/var/www/html/alerta.wsgi" : {
+                "content": { "Fn::Join" : ["", [
+                  "from alerta.app import app as application\n"
+                ]]}
+              },
+              "/etc/alerta/alerta.conf" : {
+                "content": { "Fn::Join" : ["", [
+                  "[DEFAULT]\n",
+                  "endpoint = http://localhost:8080\n",
+                  "mongo_username = ", { "Ref": "DBUsername" }, "\n",
+                  "mongo_password = ", { "Ref": "DBPassword" }, "\n",
+                  "amqp_url = mongodb://localhost:27107\n"
+                ]]}
+              }
+            },
+
+            "services" : {
+              "sysvinit" : {
+                "apache2" : { "enabled" : "true", "ensureRunning" : "true" },
+                "mongodb" : { "enabled" : "true", "ensureRunning" : "true" }
+              }
+            }
+          }
+        }
+      },
+
+      "Properties": {
+        "ImageId": { "Fn::FindInMap": [ "AWSRegion2AMI", { "Ref": "AWS::Region" }, "id" ] },
+        "InstanceType"   : { "Ref" : "InstanceType" },
+        "SecurityGroups" : [ {"Ref" : "AlertaServerSecurityGroup"} ],
+        "KeyName"        : { "Ref" : "KeyName" },
+        "Tags" : [ {"Key" : "Name", "Value" : { "Ref" : "AWS::StackName"} } ],
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash -v\n",
+
+          "function error_exit\n",
+          "{\n",
+          "  cfn-signal -e 1 -r \"$1\" '", { "Ref" : "WaitHandle" }, "'\n",
+          "  exit 1\n",
+          "}\n",
+
+          "apt-get -y install python-setuptools\n",
+          "easy_install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz\n",
+          "cfn-init --region ", { "Ref" : "AWS::Region" },
+          "    -s ", { "Ref" : "AWS::StackId" }, " -r AlertaServer ", "|| error_exit 'Failed to run cfn-init'\n",
+
+          "mongo monitoring --eval 'db.addUser({user:\"", { "Ref" : "DBUsername" }, "\", pwd:\"",{ "Ref" : "DBPassword" }, "\", roles:[\"readWrite\"]})'",
+          " >/tmp/mongo.log 2>&1 || error_exit 'Failed to create MongoDB user'\n",
+
+          "a2enconf alerta-web\n",
+          "a2ensite alerta\n",
+          "service apache2 reload\n",
+
+          "cfn-signal -e $? -r 'Alerta server configuration' '", { "Ref" : "WaitHandle" }, "'\n"
+
+        ]]}}
+      }
+    },
+
+    "WaitHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+
+    "WaitCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "DependsOn" : "AlertaServer",
+      "Properties" : {
+        "Handle" : {"Ref" : "WaitHandle"},
+        "Timeout" : "300"
+      }
+    },
+
+    "AlertaServerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable HTTP access via port 80 and port 8080 and SSH access",
+        "SecurityGroupIngress" : [
+          {"IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "CidrIp" : "0.0.0.0/0"},
+          {"IpProtocol" : "tcp", "FromPort" : "8080", "ToPort" : "8080", "CidrIp" : "0.0.0.0/0"},
+          {"IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Ref" : "SSHLocation"}}
+        ]
+      }
+    }
+  },
+
+  "Outputs" : {
+    "AlertaURL" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "AlertaServer", "PublicDnsName" ]}]] },
+      "Description" : "Alerta Web UI"
+    },
+    "AlertaAPIEndpoint" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "AlertaServer", "PublicDnsName" ]}, ":8080"]] },
+      "Description" : "Alerta API Endpoint"
+    }
+  }
+}

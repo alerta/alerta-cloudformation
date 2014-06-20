@@ -1,0 +1,244 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  
+  "Description" : "AWS CloudFormation Alerta Demo Template: This template instantiate a Alerta Demo server on a single EC2 instance with an EBS volume for demonstration purpose.",
+  
+  "Parameters" : {
+      
+    "KeyName": {
+      "Description" : "Name of an existing KeyPair to enable SSH access to the instances",
+      "Type": "String",
+      "Default": "dnanini-test",
+      "MinLength": "1",
+      "MaxLength": "255",
+      "AllowedPattern" : "[\\x20-\\x7E]*",
+      "ConstraintDescription" : "can contain only ASCII characters."
+    },    
+
+    "VolumeSize" : {
+      "Description" : "Alerta Data Volume size",
+      "Type" : "Number",
+      "Default" : "5",
+      "MinValue" : "5",
+      "MaxValue" : "1024",
+      "ConstraintDescription" : "must be between 5 and 1024 Gb."
+    },
+  
+    "InstanceType" : {
+      "Description" : "Alerta Server instance type",
+      "Type" : "String",
+      "Default" : "m1.small",
+      "AllowedValues" : [ "t1.micro","m1.small","m1.medium","m1.large","m1.xlarge","m2.xlarge","m2.2xlarge","m2.4xlarge","m3.xlarge","m3.2xlarge","c1.medium","c1.xlarge"],
+      "ConstraintDescription" : "must be a valid EC2 instance type."
+    },
+    "SSHLocation" : {
+      "Description" : "The IP address range that can be used to SSH into the instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+   }
+  },
+  
+  "Mappings" : {
+    "AWSInstanceType2Arch" : {
+      "t1.micro"    : { "Arch" : "64" },
+      "m1.small"    : { "Arch" : "64" },
+      "m1.medium"   : { "Arch" : "64" },
+      "m1.large"    : { "Arch" : "64" },
+      "m1.xlarge"   : { "Arch" : "64" },
+      "m2.xlarge"   : { "Arch" : "64" },
+      "m2.2xlarge"  : { "Arch" : "64" },
+      "m2.4xlarge"  : { "Arch" : "64" },
+      "m3.xlarge"   : { "Arch" : "64" },
+      "m3.2xlarge"  : { "Arch" : "64" },
+      "c1.medium"   : { "Arch" : "64" },
+      "c1.xlarge"   : { "Arch" : "64" }
+    },
+
+    "AWSRegionArch2AMI" : {
+      "us-east-1"      : { "32" : "ami-31814f58", "64" : "ami-1b814f72" },
+      "us-west-2"      : { "32" : "ami-38fe7308", "64" : "ami-30fe7300" },
+      "us-west-1"      : { "32" : "ami-11d68a54", "64" : "ami-1bd68a5e" },
+      "eu-west-1"      : { "32" : "ami-973b06e3", "64" : "ami-dea653a9" },
+      "ap-southeast-1" : { "32" : "ami-b4b0cae6", "64" : "ami-beb0caec" },
+      "ap-southeast-2" : { "32" : "ami-b3990e89", "64" : "ami-bd990e87" },
+      "ap-northeast-1" : { "32" : "ami-0644f007", "64" : "ami-0a44f00b" },
+      "sa-east-1"      : { "32" : "ami-3e3be423", "64" : "ami-3c3be421" }
+    }
+  },
+    
+  "Resources" : {     
+      
+   "AlertaServer": {  
+      "Type": "AWS::EC2::Instance",
+      "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "config" : {
+            "packages" : {
+              "apt" : {
+                "mongodb"               : [],
+                "rabbitmq-server"       : [],
+                "ganglia-monitor"       : [],
+                "apache2"               : [],
+                "libapache2-mod-wsgi"   : [],
+                "git"                   : []
+              },
+
+              "python" : {
+                "alerta"                : []
+              }
+            },
+            "files" : {
+                "/var/www/html/alerta/alerta-api.wsgi" : {
+                "content" : "from alerta.api.v2 import app as application",
+                "mode"  : "000644",
+                "owner" : "www-data",
+                "group" : "www-data"
+                },
+                "/etc/apache2/sites-available/alerta" : {
+                "source" : "https://raw.github.com/guardian/alerta/master/contrib/apache/httpd-alerta-api.conf",
+                "mode"  : "000644",
+                "owner" : "root",
+                "group" : "root"
+                },
+                "/tmp/create-new-alert.sh" : {
+                "source" : "https://raw.github.com/guardian/alerta/master/contrib/examples/create-new-alert.sh",
+                "mode"  : "000755",
+                "owner" : "root",
+                "group" : "root"
+                }                                
+            },
+            "commands" : {
+                "reload_apache" : {
+                    "command" : ["a2ensite alerta","service apache2 reload"],
+                    "ignoreErrors" : "false"
+                },
+                "run_scripts" : {
+                    "command" : ["/tmp/create-new-alert.sh"],
+                    "ignoreErrors" : "false"
+                }
+            },
+
+            "users" : {
+              "alerta" : {
+                 "uid" : "1010"
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "ImageId" : { "Fn::FindInMap" : [ "AWSRegionArch2AMI", { "Ref" : "AWS::Region" },
+                          { "Fn::FindInMap" : [ "AWSInstanceType2Arch", { "Ref" : "InstanceType" }, "Arch" ] } ] },
+        "InstanceType"   : { "Ref" : "InstanceType" },
+        "SecurityGroups" : [ {"Ref" : "AlertaServerSecurityGroup"} ],
+        "KeyName"        : { "Ref" : "KeyName" },
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash -ex\n",
+          "apt-get update\n",
+          "apt-get -y install python-setuptools\n",
+          "wget -P /root https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz","\n",
+          "mkdir -p /root/aws-cfn-bootstrap-latest","\n",
+          "tar xvfz /root/aws-cfn-bootstrap-latest.tar.gz --strip-components=1 -C /root/aws-cfn-bootstrap-latest","\n",
+          "easy_install /root/aws-cfn-bootstrap-latest/","\n",
+
+          "# Alerta configuration\n",          
+          "mkdir -p /var/www/html/alerta\n",
+          "mkdir /var/log/alerta\n",
+          "chmod -R 0777 /var/log/alerta\n",
+          "mkdir /var/alerta\n",
+
+          "# Helper function\n",
+          "function error_exit\n",
+          "{\n",
+          "  cfn-signal -e 1 -r \"$1\" '", { "Ref" : "WaitHandle" }, "'\n",
+          "  exit 1\n",
+          "}\n",
+
+          "cfn-init -s ",{ "Ref":"AWS::StackName" }," -r AlertaServer ", " --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
+
+          "# Wait for the EBS volume to show up\n",
+          "while [ ! -e /dev/xvdh ]; do echo Waiting for EBS volume to attach; sleep 5; done\n",
+
+          "# Format the EBS volume and mount it\n",
+          "mkfs -t ext4 /dev/xvdh\n",
+          "mount /dev/xvdh /var/alerta\n",
+
+          "# RabbitMQ config\n",
+          "rabbitmq-plugins enable rabbitmq_stomp\n",
+          "rabbitmq-plugins enable rabbitmq_management\n",
+          "service rabbitmq-server restart\n",
+          "wget http://guest:guest@localhost:15672/cli/rabbitmqadmin && chmod +x rabbitmqadmin\n",
+          "./rabbitmqadmin declare exchange name=alerts type=fanout\n",
+
+          "# Apache config\n",
+          "a2ensite alerta\n",
+          "#service apache2 reload\n",
+
+          "# Add some alerts\n",
+          "#/tmp/create-new-alert.sh\n",
+        
+          "# If all is well so signal success\n",
+          "/opt/aws/bin/cfn-signal -e $? -r \"Alerta Server is ready\" '", { "Ref" : "WaitHandle" }, "'\n"
+        ]]}}        
+      }
+    },
+
+    "AlertaServerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable SSH access and HTTP access on the inbound port",
+        "SecurityGroupIngress" : [
+          {"IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "CidrIp" : "0.0.0.0/0"},
+          {"IpProtocol" : "tcp", "FromPort" : "8080", "ToPort" : "8080", "CidrIp" : "0.0.0.0/0"},
+          {"IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Ref" : "SSHLocation"}}
+        ]
+      }      
+    },
+
+    "DataVolume" : {
+      "Type" : "AWS::EC2::Volume",
+      "Properties" : {
+        "Size" : { "Ref" : "VolumeSize" },
+        "AvailabilityZone" : { "Fn::GetAtt" : [ "AlertaServer", "AvailabilityZone" ]},
+        "Tags" : [{ "Key" : "Usage", "Value" : "Alerta Data Volume" }]
+      }
+    },
+
+    "MountPoint" : {
+      "Type" : "AWS::EC2::VolumeAttachment",
+      "Properties" : {
+        "InstanceId" : { "Ref" : "AlertaServer" },
+        "VolumeId"  : { "Ref" : "DataVolume" },
+        "Device" : "/dev/xvdh"
+      }
+    },
+
+    "WaitHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+
+    "WaitCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "DependsOn" : "MountPoint",
+      "Properties" : {
+        "Handle" : { "Ref" : "WaitHandle"},
+        "Timeout" : "5000"
+      }
+    }    
+  },
+  
+  "Outputs" : {
+    "AlertaDashboard" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "AlertaServer", "PublicDnsName" ]}, "/alerta/dashboard/v2/index.html"]] },
+      "Description" : "URL for the Alerta Dashboard"
+    },
+    "AlertaApiURL" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "AlertaServer", "PublicDnsName" ]}, ":8080/alerta/api/v2"]] },
+      "Description" : "URL for the Alerta Api"
+    }
+  }
+}
