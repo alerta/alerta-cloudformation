@@ -105,12 +105,6 @@
             },
 
             "files" : {
-              "/etc/apache2/conf-available/alerta-web.conf" : {
-                "content": { "Fn::Join" : ["", [
-                  "RedirectMatch ^/$ /alerta/\n",
-                  "RedirectMatch ^/alerta/?$ /alerta/app/\n"
-                ]]}
-              },
               "/etc/apache2/sites-available/alerta.conf" : {
                 "content": { "Fn::Join" : ["", [
                   "Listen 8080\n",
@@ -170,10 +164,10 @@
           "cfn-init --region ", { "Ref" : "AWS::Region" },
           "    -s ", { "Ref" : "AWS::StackId" }, " -r AlertaServer ", "|| error_exit 'Failed to run cfn-init'\n",
 
-          "mongo monitoring --eval 'db.addUser({user:\"", { "Ref" : "DBUsername" }, "\", pwd:\"",{ "Ref" : "DBPassword" }, "\", roles:[\"readWrite\"]})'",
+          "while ! pgrep -fl mongodb; do echo Waiting for MongoDB to start; sleep 5; done\n",
+          "mongo monitoring --eval 'db.addUser({user:\"", { "Ref" : "DBUsername" }, "\", pwd:\"", { "Ref" : "DBPassword" }, "\", roles:[\"readWrite\"]})'",
           " >/tmp/mongo.log 2>&1 || error_exit 'Failed to create MongoDB user'\n",
 
-          "a2enconf alerta-web\n",
           "a2ensite alerta\n",
           "service apache2 reload\n",
 
@@ -211,7 +205,7 @@
 
   "Outputs" : {
     "AlertaURL" : {
-      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "AlertaServer", "PublicDnsName" ]}]] },
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "AlertaServer", "PublicDnsName" ]}, "/alerta/app/index.html"]] },
       "Description" : "Alerta Web UI"
     },
     "AlertaAPIEndpoint" : {
