@@ -107,7 +107,7 @@
             "files" : {
               "/etc/apache2/conf-available/alerta-web.conf" : {
                 "content": { "Fn::Join" : ["", [
-                  "RedirectMatch ^/$ /alerta/\n"
+                  "RedirectMatch ^/$ /alerta/\n",
                   "RedirectMatch ^/alerta/?$ /alerta/app/\n"
                 ]]}
               },
