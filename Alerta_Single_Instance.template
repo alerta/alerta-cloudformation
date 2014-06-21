@@ -59,6 +59,12 @@
       "ConstraintDescription" : "must contain only alphanumeric characters"
     },
 
+    "QueueName": {
+      "Default": "alert-queue",
+      "Type": "String",
+      "AllowedPattern": "[a-zA-Z0-9-]+"
+    },
+
     "SSHLocation" : {
       "Description" : "The IP address range that can be used to SSH to the EC2 instances",
       "Type": "String",
@@ -83,6 +89,57 @@
   },
 
   "Resources" : {
+
+    "CfnUser" : {
+      "Type" : "AWS::IAM::User",
+      "Properties" : {
+        "Path": "/",
+        "Policies": [{
+          "PolicyName": "root",
+          "PolicyDocument": { "Statement":[
+            {
+              "Effect": "Allow",
+              "Action": "SQS:*",
+              "Resource": { "Fn::GetAtt" : [ "SqsQueue", "Arn" ] }
+            }
+          ]}
+        }]
+      }
+    },
+
+    "HostKeys" : {
+      "Type" : "AWS::IAM::AccessKey",
+      "Properties" : {
+        "UserName" : {"Ref": "CfnUser"}
+      }
+    },
+
+    "SqsQueue" : {
+      "Type" : "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": { "Ref": "QueueName" },
+        "ReceiveMessageWaitTimeSeconds": 20
+      }
+
+    },
+
+    "SqsQueuePolicy" : {
+      "Type" : "AWS::SQS::QueuePolicy",
+      "Properties" : {
+        "Queues" : [ { "Ref" : "SqsQueue" } ],
+        "PolicyDocument":  {
+          "Version": "2008-10-17",
+          "Id": "SendToQueuePolicy",
+          "Statement" : [ {
+            "Sid": "SendMessages",
+            "Effect": "Allow",
+            "Principal" : { "AWS": {"Fn::GetAtt" : ["CfnUser", "Arn"]} },
+            "Action": ["sqs:*"],
+            "Resource": { "Fn::GetAtt" : [ "SqsQueue", "Arn" ] }
+          } ]
+        }
+      }
+    },
 
     "AlertaServer": {
       "Type": "AWS::EC2::Instance",
@@ -129,7 +186,9 @@
                   "endpoint = http://localhost:8080\n",
                   "mongo_username = ", { "Ref": "DBUsername" }, "\n",
                   "mongo_password = ", { "Ref": "DBPassword" }, "\n",
-                  "amqp_url = mongodb://localhost:27107\n"
+                  "amqp_queue = ", { "Fn::GetAtt" : ["SqsQueue", "QueueName"]}, "\n",
+                  "amqp_url = sqs://", {"Ref" : "HostKeys" }, ":", {"Fn::GetAtt": ["HostKeys", "SecretAccessKey"]}, "@\n",
+                  "amqp_sqs_region = ", { "Ref": "AWS::Region" }, "\n"
                 ]]}
               }
             },
