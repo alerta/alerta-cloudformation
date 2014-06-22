@@ -59,10 +59,16 @@
       "ConstraintDescription" : "must contain only alphanumeric characters"
     },
 
-    "QueueName": {
-      "Default": "alert-queue",
+    "AlarmTopic": {
+      "Default": "alarm-topic",
+      "Description": "Output alarm notification topic",
       "Type": "String",
       "AllowedPattern": "[a-zA-Z0-9-]+"
+    },
+
+    "OperatorEmail": {
+      "Description": "email address to notify if there are operational issues",
+      "Type": "String"
     },
 
     "SSHLocation" : {
@@ -99,8 +105,8 @@
           "PolicyDocument": { "Statement":[
             {
               "Effect": "Allow",
-              "Action": "SQS:*",
-              "Resource": { "Fn::GetAtt" : [ "SqsQueue", "Arn" ] }
+              "Action": "SNS:*",
+              "Resource": "*"
             }
           ]}
         }]
@@ -114,30 +120,11 @@
       }
     },
 
-    "SqsQueue" : {
-      "Type" : "AWS::SQS::Queue",
+    "AlarmSnsTopic": {
+      "Type": "AWS::SNS::Topic",
       "Properties": {
-        "QueueName": { "Ref": "QueueName" },
-        "ReceiveMessageWaitTimeSeconds": 20
-      }
-
-    },
-
-    "SqsQueuePolicy" : {
-      "Type" : "AWS::SQS::QueuePolicy",
-      "Properties" : {
-        "Queues" : [ { "Ref" : "SqsQueue" } ],
-        "PolicyDocument":  {
-          "Version": "2008-10-17",
-          "Id": "SendToQueuePolicy",
-          "Statement" : [ {
-            "Sid": "SendMessages",
-            "Effect": "Allow",
-            "Principal" : { "AWS": {"Fn::GetAtt" : ["CfnUser", "Arn"]} },
-            "Action": ["sqs:*"],
-            "Resource": { "Fn::GetAtt" : [ "SqsQueue", "Arn" ] }
-          } ]
-        }
+        "TopicName": { "Ref": "AlarmTopic" },
+        "Subscription": [ { "Endpoint": { "Ref": "OperatorEmail" }, "Protocol": "email" } ]
       }
     },
 
@@ -153,7 +140,7 @@
                 "mongodb-server"      : []
               },
               "python": {
-                "alerta-app" : []
+                "alerta-server" : []
               }
             },
 
@@ -186,9 +173,11 @@
                   "endpoint = http://localhost:8080\n",
                   "mongo_username = ", { "Ref": "DBUsername" }, "\n",
                   "mongo_password = ", { "Ref": "DBPassword" }, "\n",
-                  "amqp_queue = ", { "Fn::GetAtt" : ["SqsQueue", "QueueName"]}, "\n",
-                  "amqp_url = sqs://", {"Ref" : "HostKeys" }, ":", {"Fn::GetAtt": ["HostKeys", "SecretAccessKey"]}, "@\n",
-                  "amqp_sqs_region = ", { "Ref": "AWS::Region" }, "\n"
+                  "transport = sns\n",
+                  "output_topic = ", { "Fn::GetAtt" : ["AlarmSnsTopic", "TopicName"]}, "\n",
+                  "aws_access_key_id = ", {"Ref" : "HostKeys" }, "\n",
+                  "aws_secret_access_key = ", {"Fn::GetAtt": ["HostKeys", "SecretAccessKey"]}, "\n",
+                  "sns_region = ", { "Ref": "AWS::Region" }, "\n"
                 ]]}
               }
             },
