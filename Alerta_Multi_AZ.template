@@ -1,14 +1,14 @@
 {
-  "AWSTemplateFormatVersion": "2010-09-09",
+  "AWSTemplateFormatVersion" : "2010-09-09",
 
-  "Description": "Alerta - multiple instances with ELB",
+  "Description" : "Alerta - multiple instances behind an ELB",
 
-  "Parameters": {
+  "Parameters" : {
 
     "KeyName": {
-      "Default": "bootstrap",
-      "Description": "Name of an existing EC2 KeyPair for SSH access",
-      "Type": "String"
+        "Default": "bootstrap",
+        "Description": "Name of an existing EC2 KeyPair for SSH access",
+        "Type": "String"
     },
 
     "Capacity": {
@@ -83,7 +83,7 @@
       "MaxLength": "18",
       "Default": "0.0.0.0/0",
       "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
-      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
     }
   },
 
@@ -100,151 +100,239 @@
     }
   },
 
-"Resources": {
+  "Resources" : {
 
-"LoadBalancer": {
-"Type": "AWS::ElasticLoadBalancing::LoadBalancer",
-"Properties": {
-    "AvailabilityZones": { "Fn::GetAZs": "" },
-    "CrossZone": true,
-    "Listeners": [
-        {
+    "CfnUser" : {
+      "Type" : "AWS::IAM::User",
+      "Properties" : {
+        "Path": "/",
+        "Policies": [{
+          "PolicyName": "root",
+          "PolicyDocument": { "Statement":[
+            {
+              "Effect": "Allow",
+              "Action": "SNS:*",
+              "Resource": "*"
+            }
+          ]}
+        }]
+      }
+    },
+
+    "HostKeys" : {
+      "Type" : "AWS::IAM::AccessKey",
+      "Properties" : {
+        "UserName" : {"Ref": "CfnUser"}
+      }
+    },
+
+    "AlarmSnsTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "TopicName": { "Ref": "AlarmTopic" },
+        "Subscription": [ { "Endpoint": { "Ref": "OperatorEmail" }, "Protocol": "email" } ]
+      }
+    },
+
+    "LoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties": {
+        "AvailabilityZones": { "Fn::GetAZs": "" },
+        "CrossZone": true,
+        "Listeners": [
+          {
             "Protocol": "HTTP",
             "LoadBalancerPort": "80",
             "InstancePort": "80"
-        },
-        {
+          },
+          {
             "Protocol": "HTTP",
             "LoadBalancerPort": "8080",
             "InstancePort": "8080"
+          }
+        ],
+        "HealthCheck": {
+          "Target": "HTTP:8080/_",
+          "Timeout": "10",
+          "Interval": "20",
+          "UnhealthyThreshold": "10",
+          "HealthyThreshold": "2"
         }
-    ],
-    "HealthCheck": {
-        "Target": "HTTP:8080/_",
-        "Timeout": "10",
-        "Interval": "20",
-        "UnhealthyThreshold": "10",
-        "HealthyThreshold": "2"
-    }
-}
-},
+      }
+    },
 
-"AutoscalingGroup": {
-"Type": "AWS::AutoScaling::AutoScalingGroup",
-"Properties": {
-    "AvailabilityZones": { "Fn::GetAZs": "" },
-    "LaunchConfigurationName": { "Ref": "LaunchConfig" },
-    "MinSize": "1",
-    "MaxSize": "4",
-    "DesiredCapacity": { "Ref": "Capacity" },
-    "HealthCheckType": "ELB",
-    "HealthCheckGracePeriod": 600,
-    "LoadBalancerNames": [ { "Ref": "LoadBalancer" } ],
-    "Tags": [
+  "AutoscalingGroup": {
+    "Type": "AWS::AutoScaling::AutoScalingGroup",
+    "Properties": {
+      "AvailabilityZones": { "Fn::GetAZs": "" },
+      "LaunchConfigurationName": { "Ref": "LaunchConfig" },
+      "MinSize": "1",
+      "MaxSize": "4",
+      "DesiredCapacity": { "Ref": "Capacity" },
+      "HealthCheckType": "ELB",
+      "HealthCheckGracePeriod": 600,
+      "LoadBalancerNames": [ { "Ref": "LoadBalancer" } ],
+      "Tags": [
         {
-            "Key": "Name",
-            "Value": "Alerta",
-            "PropagateAtLaunch": "true"
+          "Key": "Name",
+          "Value": "Alerta",
+          "PropagateAtLaunch": "true"
         }
-    ]
-}
-},
-
-"LaunchConfig": {
-"Type": "AWS::AutoScaling::LaunchConfiguration",
-"Properties": {
-    "ImageId": { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
-    "SecurityGroups": [ { "Ref": "SecurityGroup" } ],
-    "InstanceType": { "Ref": "InstanceType" },
-    "KeyName": { "Ref": "KeyName" },
-    "UserData": {
-        "Fn::Base64": {
-            "Fn::Join": [ "\n", [
-                "#!/bin/bash -v",
-
-                "apt-get -y update",
-                "apt-get -y install language-pack-en git build-essential python-setuptools python-pip python-dev python-virtualenv apache2 libapache2-mod-wsgi mongodb-server",
-
-                "adduser --group alerta",
-                "adduser --disabled-password --gecos \"\" --ingroup alerta alerta",
-
-                "cd /opt",
-                "virtualenv alerta",
-                "alerta/bin/pip install alerta-app",
-
-                "cat << EOF >/etc/apache2/sites-available/alerta.conf",
-                "Listen 8080",
-                "<VirtualHost *:8080>",
-                "    WSGIDaemonProcess alerta user=alerta group=alerta processes=5 threads=5",
-                "    WSGIScriptAlias / /opt/alerta/app.wsgi",
-                "    <Directory /opt/alerta>",
-                "        WSGIProcessGroup alerta",
-                "        WSGIApplicationGroup %{GLOBAL}",
-                "        Require all granted",
-                "    </Directory>",
-                "</VirtualHost>",
-                "EOF",
-
-                "cat <<EOF >/opt/alerta/app.wsgi",
-                "#!/usr/bin/env python",
-                "activate_this = '/opt/alerta/bin/activate_this.py'",
-                "execfile(activate_this, dict(__file__=activate_this))",
-                "from alerta.app import app as application",
-                "EOF",
-
-                "a2ensite alerta",
-
-                "cd /var/www",
-                "curl -L https://github.com/alerta/angular-alerta-webui/tarball/master | tar xz",
-                "mv alerta-angular-alerta-webui-*/app/ /var/www/alerta",
-                "sed -i 's/DocumentRoot \/var\/www\/html/DocumentRoot \/var\/www\/alerta/' /etc/apache2/sites-available/000-default.conf",
-                "rm -Rf alerta-angular-alerta-webui-*",
-
-                "service apache2 reload"
-            ] ]
-        }
+      ]
     }
-}
-},
+  },
 
-"SecurityGroup": {
-"Type": "AWS::EC2::SecurityGroup",
-"Properties": {
-    "GroupDescription": "HTTP and SSH",
-    "SecurityGroupIngress": [
-        {
+  "LaunchConfig": {
+    "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "config" : {
+            "packages" : {
+              "apt" : {
+                "apache2"             : [],
+                "libapache2-mod-wsgi" : [],
+                "mongodb-server"      : []
+              },
+              "python": {
+                "alerta-server" : []
+              }
+            },
+
+            "sources" : {
+              "/var/www/alerta" : "https://github.com/alerta/angular-alerta-webui/tarball/master"
+            },
+
+            "files" : {
+              "/etc/apache2/sites-available/alerta.conf" : {
+                "content": { "Fn::Join" : ["", [
+                  "Listen 8080\n",
+                  "<VirtualHost *:8080>\n",
+                  "    WSGIDaemonProcess alerta processes=5 threads=5\n",
+                  "    WSGIScriptAlias / /var/www/html/alerta.wsgi\n",
+                  "    <Directory /var/www/html>\n",
+                  "        WSGIApplicationGroup %{GLOBAL}\n",
+                  "        Require all granted\n",
+                  "    </Directory>\n",
+                  "</VirtualHost>\n"
+                ]]}
+              },
+              "/var/www/html/alerta.wsgi" : {
+                "content": { "Fn::Join" : ["", [
+                  "from alerta.app import app as application\n"
+                ]]}
+              },
+              "/etc/alerta/alerta.conf" : {
+                "content": { "Fn::Join" : ["", [
+                  "[DEFAULT]\n",
+                  "endpoint = http://localhost:8080\n",
+                  "mongo_username = ", { "Ref": "DBUsername" }, "\n",
+                  "mongo_password = ", { "Ref": "DBPassword" }, "\n",
+                  "transport = sns\n",
+                  "output_topic = ", { "Fn::GetAtt" : ["AlarmSnsTopic", "TopicName"]}, "\n",
+                  "aws_access_key_id = ", {"Ref" : "HostKeys" }, "\n",
+                  "aws_secret_access_key = ", {"Fn::GetAtt": ["HostKeys", "SecretAccessKey"]}, "\n",
+                  "sns_region = ", { "Ref": "AWS::Region" }, "\n"
+                ]]}
+              }
+            },
+
+            "services" : {
+              "sysvinit" : {
+                "apache2" : { "enabled" : "true", "ensureRunning" : "true" },
+                "mongodb" : { "enabled" : "true", "ensureRunning" : "true" }
+              }
+            }
+          }
+        }
+      },
+
+      "Properties": {
+        "ImageId": { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
+        "InstanceType"   : { "Ref" : "InstanceType" },
+        "SecurityGroups" : [ {"Ref" : "SecurityGroup"} ],
+        "KeyName"        : { "Ref" : "KeyName" },
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash -v\n",
+
+          "# Helper function\n",
+          "function error_exit\n",
+          "{\n",
+          "  /opt/aws/bin/cfn-signal -e 1 -r \"$1\" '", { "Ref" : "WaitHandle" }, "'\n",
+          "  exit 1\n",
+          "}\n",
+
+          "apt-get -y install python-setuptools\n",
+          "easy_install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz\n",
+          "cfn-init -s ", { "Ref" : "AWS::StackId" }, " -r LaunchConfig ",
+          "    --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
+
+          "while ! pgrep -fl mongodb; do echo Waiting for MongoDB to start; sleep 5; done\n",
+          "mongo monitoring --eval 'db.addUser({user:\"", { "Ref" : "DBUsername" }, "\", pwd:\"", { "Ref" : "DBPassword" }, "\", roles:[\"readWrite\"]})'",
+          " >/tmp/mongo.log 2>&1 || error_exit 'Failed to create MongoDB user'\n",
+
+          "cp -R /var/www/alerta/app/* /var/www/html\n",
+          "rm -Rf /var/www/alerta\n",
+
+          "a2ensite alerta\n",
+          "service apache2 reload\n",
+
+          "cfn-signal -e $? -r 'Alerta server configuration' '", { "Ref" : "WaitHandle" }, "'\n"
+
+        ]]}}
+      }
+    },
+
+    "WaitHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+
+    "WaitCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "DependsOn" : "AutoscalingGroup",
+      "Properties" : {
+        "Handle" : {"Ref" : "WaitHandle"},
+        "Timeout" : "900"
+      }
+    },
+
+    "SecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "HTTP and SSH",
+        "SecurityGroupIngress": [
+          {
             "IpProtocol": "tcp",
             "FromPort": "80",
             "ToPort": "80",
             "SourceSecurityGroupName": "amazon-elb-sg",
             "SourceSecurityGroupOwnerId": "amazon-elb"
-        },
-        {
+          },
+          {
             "IpProtocol": "tcp",
             "FromPort": "8080",
             "ToPort": "8080",
             "SourceSecurityGroupName": "amazon-elb-sg",
             "SourceSecurityGroupOwnerId": "amazon-elb"
-        },
-        {
+          },
+          {
             "IpProtocol": "tcp",
             "FromPort": "22",
             "ToPort": "22",
             "CidrIp": { "Ref" : "SSHLocation"}
-        }
-    ]
-}
-}
-},
+          }
+        ]
+      }
+    }
+  },
 
-"Outputs": {
-"WebURL": {
-"Value": { "Fn::Join": ["", ["http://", { "Fn::GetAtt": [ "LoadBalancer", "DNSName" ]}, "/"]] },
-"Description": "URL for Alerta console"
-},
-"ApiURL": {
-"Value": { "Fn::Join": ["", ["http://", { "Fn::GetAtt": [ "LoadBalancer", "DNSName" ]}, ":8080"]] },
-"Description": "URL for API Endpoint"
-}
-}
+  "Outputs" : {
+    "AlertaURL" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "LoadBalancer", "DNSName" ]}, "/"]] },
+      "Description" : "Alerta Web UI"
+    },
+    "AlertaAPIEndpoint" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "LoadBalancer", "DNSName" ]}, ":8080"]] },
+      "Description" : "Alerta API Endpoint"
+    }
+  }
 }
