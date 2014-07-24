@@ -143,7 +143,7 @@
             },
 
             "sources" : {
-              "/var/www/html/alerta" : "https://github.com/alerta/angular-alerta-webui/tarball/master"
+              "/var/www/alerta" : "https://github.com/alerta/angular-alerta-webui/tarball/master"
             },
 
             "files" : {
@@ -151,12 +151,12 @@
                 "content": { "Fn::Join" : ["", [
                   "Listen 8080\n",
                   "<VirtualHost *:8080>\n",
-                  "\tWSGIDaemonProcess alerta processes=5 threads=5\n",
-                  "\tWSGIScriptAlias / /var/www/html/alerta.wsgi\n",
-                  "\t<Directory /var/www/html>\n",
-                  "\t\tWSGIApplicationGroup %{GLOBAL}\n",
-                  "\t\tRequire all granted\n",
-                  "\t</Directory>\n",
+                  "    WSGIDaemonProcess alerta processes=5 threads=5\n",
+                  "    WSGIScriptAlias / /var/www/html/alerta.wsgi\n",
+                  "    <Directory /var/www/html>\n",
+                  "        WSGIApplicationGroup %{GLOBAL}\n",
+                  "        Require all granted\n",
+                  "    </Directory>\n",
                   "</VirtualHost>\n"
                 ]]}
               },
@@ -191,7 +191,7 @@
       },
 
       "Properties": {
-        "ImageId": { "Fn::FindInMap": [ "AWSRegion2AMI", { "Ref": "AWS::Region" }, "id" ] },
+        "ImageId": { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
         "InstanceType"   : { "Ref" : "InstanceType" },
         "SecurityGroups" : [ {"Ref" : "AlertaServerSecurityGroup"} ],
         "KeyName"        : { "Ref" : "KeyName" },
@@ -213,6 +213,9 @@
           "while ! pgrep -fl mongodb; do echo Waiting for MongoDB to start; sleep 5; done\n",
           "mongo monitoring --eval 'db.addUser({user:\"", { "Ref" : "DBUsername" }, "\", pwd:\"", { "Ref" : "DBPassword" }, "\", roles:[\"readWrite\"]})'",
           " >/tmp/mongo.log 2>&1 || error_exit 'Failed to create MongoDB user'\n",
+
+          "cp -R /var/www/alerta/app/* /var/www/html\n",
+          "rm -Rf /var/www/alerta\n",
 
           "a2ensite alerta\n",
           "service apache2 reload\n",
@@ -251,7 +254,7 @@
 
   "Outputs" : {
     "AlertaURL" : {
-      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "AlertaServer", "PublicDnsName" ]}, "/alerta/app/index.html"]] },
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "AlertaServer", "PublicDnsName" ]}, "/"]] },
       "Description" : "Alerta Web UI"
     },
     "AlertaAPIEndpoint" : {
