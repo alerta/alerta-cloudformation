@@ -1,0 +1,250 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+
+  "Description": "Alerta - multiple instances with ELB",
+
+  "Parameters": {
+
+    "KeyName": {
+      "Default": "bootstrap",
+      "Description": "Name of an existing EC2 KeyPair for SSH access",
+      "Type": "String"
+    },
+
+    "Capacity": {
+      "Description": "Autoscale Size",
+      "Type": "Number",
+      "Default": "1",
+      "MinValue": 1,
+      "MaxValue": 4
+    },
+
+    "InstanceType" : {
+      "Description" : "Alerta EC2 instance type",
+      "Type" : "String",
+      "Default" : "m1.small",
+      "AllowedValues" : [
+        "t1.micro",
+        "m1.small",
+        "m1.medium",
+        "m1.large",
+        "m1.xlarge",
+        "m2.xlarge",
+        "m2.2xlarge",
+        "m2.4xlarge",
+        "m3.xlarge",
+        "m3.2xlarge",
+        "c1.medium",
+        "c1.xlarge",
+        "cc1.4xlarge",
+        "cc2.8xlarge",
+        "cg1.4xlarge"
+      ],
+      "ConstraintDescription" : "must be a valid EC2 instance type."
+    },
+
+    "DBUsername": {
+      "Default": "alerta",
+      "Description" : "Username for the MongoDB Alerta database",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "16",
+      "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters"
+    },
+
+    "DBPassword": {
+      "Default": "alerta",
+      "NoEcho": "true",
+      "Description" : "Password for the MongoDB Alerta database",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "41",
+      "AllowedPattern" : "[a-zA-Z0-9]+",
+      "ConstraintDescription" : "must contain only alphanumeric characters"
+    },
+
+    "AlarmTopic": {
+      "Default": "alarm-topic",
+      "Description": "Output alarm notification topic",
+      "Type": "String",
+      "AllowedPattern": "[a-zA-Z0-9-]+"
+    },
+
+    "OperatorEmail": {
+      "Description": "email address to notify if there are operational issues",
+      "Type": "String"
+    },
+
+    "SSHLocation" : {
+      "Description" : "The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    }
+  },
+
+  "Mappings" : {
+    "RegionMap" : {
+      "us-east-1"      : { "AMI" : "ami-30519058" },
+      "us-west-2"      : { "AMI" : "ami-5b58266b" },
+      "us-west-1"      : { "AMI" : "ami-957070d0" },
+      "eu-west-1"      : { "AMI" : "ami-3986524e" },
+      "ap-southeast-1" : { "AMI" : "ami-dad68888" },
+      "ap-northeast-1" : { "AMI" : "ami-cb4610ca" },
+      "ap-southeast-2" : { "AMI" : "ami-eb6d0ad1" },
+      "sa-east-1"      : { "AMI" : "ami-1189270c" }
+    }
+  },
+
+"Resources": {
+
+"LoadBalancer": {
+"Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+"Properties": {
+    "AvailabilityZones": { "Fn::GetAZs": "" },
+    "CrossZone": true,
+    "Listeners": [
+        {
+            "Protocol": "HTTP",
+            "LoadBalancerPort": "80",
+            "InstancePort": "80"
+        },
+        {
+            "Protocol": "HTTP",
+            "LoadBalancerPort": "8080",
+            "InstancePort": "8080"
+        }
+    ],
+    "HealthCheck": {
+        "Target": "HTTP:8080/_",
+        "Timeout": "10",
+        "Interval": "20",
+        "UnhealthyThreshold": "10",
+        "HealthyThreshold": "2"
+    }
+}
+},
+
+"AutoscalingGroup": {
+"Type": "AWS::AutoScaling::AutoScalingGroup",
+"Properties": {
+    "AvailabilityZones": { "Fn::GetAZs": "" },
+    "LaunchConfigurationName": { "Ref": "LaunchConfig" },
+    "MinSize": "1",
+    "MaxSize": "4",
+    "DesiredCapacity": { "Ref": "Capacity" },
+    "HealthCheckType": "ELB",
+    "HealthCheckGracePeriod": 600,
+    "LoadBalancerNames": [ { "Ref": "LoadBalancer" } ],
+    "Tags": [
+        {
+            "Key": "Name",
+            "Value": "Alerta",
+            "PropagateAtLaunch": "true"
+        }
+    ]
+}
+},
+
+"LaunchConfig": {
+"Type": "AWS::AutoScaling::LaunchConfiguration",
+"Properties": {
+    "ImageId": { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
+    "SecurityGroups": [ { "Ref": "SecurityGroup" } ],
+    "InstanceType": { "Ref": "InstanceType" },
+    "KeyName": { "Ref": "KeyName" },
+    "UserData": {
+        "Fn::Base64": {
+            "Fn::Join": [ "\n", [
+                "#!/bin/bash -v",
+
+                "apt-get -y update",
+                "apt-get -y install language-pack-en git build-essential python-setuptools python-pip python-dev python-virtualenv apache2 libapache2-mod-wsgi mongodb-server",
+
+                "adduser --group alerta",
+                "adduser --disabled-password --gecos \"\" --ingroup alerta alerta",
+
+                "cd /opt",
+                "virtualenv alerta",
+                "alerta/bin/pip install alerta-app",
+
+                "cat << EOF >/etc/apache2/sites-available/alerta.conf",
+                "Listen 8080",
+                "<VirtualHost *:8080>",
+                "    WSGIDaemonProcess alerta user=alerta group=alerta processes=5 threads=5",
+                "    WSGIScriptAlias / /opt/alerta/app.wsgi",
+                "    <Directory /opt/alerta>",
+                "        WSGIProcessGroup alerta",
+                "        WSGIApplicationGroup %{GLOBAL}",
+                "        Require all granted",
+                "    </Directory>",
+                "</VirtualHost>",
+                "EOF",
+
+                "cat <<EOF >/opt/alerta/app.wsgi",
+                "#!/usr/bin/env python",
+                "activate_this = '/opt/alerta/bin/activate_this.py'",
+                "execfile(activate_this, dict(__file__=activate_this))",
+                "from alerta.app import app as application",
+                "EOF",
+
+                "a2ensite alerta",
+
+                "cd /var/www",
+                "curl -L https://github.com/alerta/angular-alerta-webui/tarball/master | tar xz",
+                "mv alerta-angular-alerta-webui-*/app/ /var/www/alerta",
+                "sed -i 's/DocumentRoot \/var\/www\/html/DocumentRoot \/var\/www\/alerta/' /etc/apache2/sites-available/000-default.conf",
+                "rm -Rf alerta-angular-alerta-webui-*",
+
+                "service apache2 reload"
+            ] ]
+        }
+    }
+}
+},
+
+"SecurityGroup": {
+"Type": "AWS::EC2::SecurityGroup",
+"Properties": {
+    "GroupDescription": "HTTP and SSH",
+    "SecurityGroupIngress": [
+        {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "SourceSecurityGroupName": "amazon-elb-sg",
+            "SourceSecurityGroupOwnerId": "amazon-elb"
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": "8080",
+            "ToPort": "8080",
+            "SourceSecurityGroupName": "amazon-elb-sg",
+            "SourceSecurityGroupOwnerId": "amazon-elb"
+        },
+        {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": { "Ref" : "SSHLocation"}
+        }
+    ]
+}
+}
+},
+
+"Outputs": {
+"WebURL": {
+"Value": { "Fn::Join": ["", ["http://", { "Fn::GetAtt": [ "LoadBalancer", "DNSName" ]}, "/"]] },
+"Description": "URL for Alerta console"
+},
+"ApiURL": {
+"Value": { "Fn::Join": ["", ["http://", { "Fn::GetAtt": [ "LoadBalancer", "DNSName" ]}, ":8080"]] },
+"Description": "URL for API Endpoint"
+}
+}
+}
