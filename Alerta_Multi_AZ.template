@@ -330,7 +330,7 @@
       "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "LoadBalancer", "DNSName" ]}, "/"]] },
       "Description" : "Alerta Web UI"
     },
-    "AlertaAPIEndpoint" : {
+    "AlertaApiEndpoint" : {
       "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "LoadBalancer", "DNSName" ]}, ":8080"]] },
       "Description" : "Alerta API Endpoint"
     }
