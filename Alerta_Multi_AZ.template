@@ -11,6 +11,14 @@
         "Type": "String"
     },
 
+    "Stage": {
+      "Description": "Stage",
+      "Type": "String",
+      "Default": "PROD",
+      "AllowedValues": [ "PROD", "CODE" ],
+      "ConstraintDescription": "must be a valid stage eg. PROD, CODE"
+    },
+
     "Capacity": {
       "Description": "Autoscale Size",
       "Type": "Number",
@@ -20,11 +28,11 @@
     },
 
     "InstanceType" : {
-      "Description" : "Alerta EC2 instance type",
+      "Description" : "EC2 instance type",
       "Type" : "String",
       "Default" : "m1.small",
       "AllowedValues" : [
-        "t1.micro",
+        "t2.micro",
         "m1.small",
         "m1.medium",
         "m1.large",
@@ -62,6 +70,24 @@
       "MaxLength": "41",
       "AllowedPattern" : "[a-zA-Z0-9]+",
       "ConstraintDescription" : "must contain only alphanumeric characters"
+    },
+
+    "GoogleOAuthClientId": {
+      "Description": "Google OAuth 2.0 Client ID",
+      "Type": "String"
+    },
+    "GoogleOAuthClientSecret": {
+      "Description": "Google OAuth 2.0 Client Secret",
+      "Type": "String"
+    },
+
+    "VpcId": {
+      "Description": "ID of the VPC onto which to launch the application eg. vpc-1234abcd",
+      "Type": "String"
+    },
+    "VpcSubnets" : {
+      "Description": "Subnets to use in VPC eg. subnet-abcd1234",
+      "Type": "CommaDelimitedList"
     },
 
     "AlarmTopic": {
@@ -173,6 +199,11 @@
       "HealthCheckGracePeriod": 600,
       "LoadBalancerNames": [ { "Ref": "LoadBalancer" } ],
       "Tags": [
+        {
+          "Key": "Stage",
+          "Value": { "Ref": "Stage" },
+          "PropagateAtLaunch": "true"
+        },
         {
           "Key": "Name",
           "Value": "Alerta",
@@ -333,6 +364,10 @@
     "AlertaApiEndpoint" : {
       "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "LoadBalancer", "DNSName" ]}, ":8080"]] },
       "Description" : "Alerta API Endpoint"
+    },
+    "GoogleOAuthRedirectUrl": {
+      "Value": { "Fn::Join": ["", ["http://", { "Fn::GetAtt": [ "LoadBalancer", "DNSName" ]}, "/auth/google/callback"]] },
+      "Description": "Redirect URL for the Google Developers Console"
     }
   }
 }
