@@ -11,12 +11,21 @@
         "Type": "String"
     },
 
+    "Stage": {
+      "Description": "Stage",
+      "Type": "String",
+      "Default": "PROD",
+      "AllowedValues": [ "PROD", "CODE" ],
+      "ConstraintDescription": "must be a valid stage eg. PROD, CODE"
+    },
+
     "InstanceType" : {
-      "Description" : "Alerta EC2 instance type",
+      "Description" : "EC2 instance type",
       "Type" : "String",
       "Default" : "m1.small",
       "AllowedValues" : [
         "t1.micro",
+        "t2.micro",
         "m1.small",
         "m1.medium",
         "m1.large",
@@ -44,7 +53,6 @@
       "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
       "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters"
     },
-
     "DBPassword": {
       "Default": "alerta",
       "NoEcho": "true",
@@ -54,6 +62,15 @@
       "MaxLength": "41",
       "AllowedPattern" : "[a-zA-Z0-9]+",
       "ConstraintDescription" : "must contain only alphanumeric characters"
+    },
+
+    "GoogleOAuthClientId": {
+      "Description": "Google OAuth 2.0 Client ID",
+      "Type": "String"
+    },
+    "GoogleOAuthClientSecret": {
+      "Description": "Google OAuth 2.0 Client Secret",
+      "Type": "String"
     },
 
     "AlarmTopic": {
@@ -147,35 +164,47 @@
             },
 
             "files" : {
-              "/etc/apache2/sites-available/alerta.conf" : {
+              "/etc/apache2/sites-available/000-default.conf" : {
                 "content": { "Fn::Join" : ["", [
                   "Listen 8080\n",
                   "<VirtualHost *:8080>\n",
-                  "    WSGIDaemonProcess alerta processes=5 threads=5\n",
-                  "    WSGIScriptAlias / /var/www/html/alerta.wsgi\n",
-                  "    <Directory /var/www/html>\n",
-                  "        WSGIApplicationGroup %{GLOBAL}\n",
-                  "        Require all granted\n",
-                  "    </Directory>\n",
+                  "   ServerName localhost\n",
+                  "   WSGIDaemonProcess alerta processes=5 threads=5\n",
+                  "   WSGIProcessGroup alerta\n",
+                  "   WSGIScriptAlias / /var/www/api.wsgi\n",
+                  "   <Directory /opt/alerta>\n",
+                  "     WSGIApplicationGroup %{GLOBAL}\n",
+                  "     Require all granted\n",
+                  "   </Directory>\n",
+                  "</VirtualHost>\n",
+                  "<VirtualHost *:80>\n",
+                  "   DocumentRoot /var/www/html\n",
+                  "   <Directory /var/www/html>\n",
+                  "     Require all granted\n",
+                  "   </Directory>\n",
                   "</VirtualHost>\n"
                 ]]}
               },
-              "/var/www/html/alerta.wsgi" : {
+              "/var/www/api.wsgi" : {
                 "content": { "Fn::Join" : ["", [
+                  "#!/usr/bin/env python\n",
                   "from alerta.app import app as application\n"
                 ]]}
               },
-              "/etc/alerta/alerta.conf" : {
+              "/etc/alertad.conf" : {
                 "content": { "Fn::Join" : ["", [
-                  "[DEFAULT]\n",
-                  "endpoint = http://localhost:8080\n",
-                  "mongo_username = ", { "Ref": "DBUsername" }, "\n",
-                  "mongo_password = ", { "Ref": "DBPassword" }, "\n",
-                  "transport = sns\n",
-                  "output_topic = ", { "Fn::GetAtt" : ["AlarmSnsTopic", "TopicName"]}, "\n",
-                  "aws_access_key_id = ", {"Ref" : "HostKeys" }, "\n",
-                  "aws_secret_access_key = ", {"Fn::GetAtt": ["HostKeys", "SecretAccessKey"]}, "\n",
-                  "sns_region = ", { "Ref": "AWS::Region" }, "\n"
+                  "USE_STDERR = False\n",
+                  "LOG_FILE = '/var/log/alertad.log'\n",
+                  "AUTH_REQUIRED = True\n",
+                  "OAUTH2_CLIENT_ID = '", { "Ref" : "GoogleOAuthClientId" }, "'\n",
+                  "ALLOWED_EMAIL_DOMAINS = ['*']\n",
+                  "MONGO_USERNAME = '", { "Ref" : "DBUsername" }, "'\n",
+                  "MONGO_PASSWORD = '", { "Ref" : "DBPassword" }, "'\n",
+                  "AWS_ACCESS_KEY_ID = '", {"Ref" : "HostKeys" }, "'\n",
+                  "AWS_SECRET_ACCESS_KEY = '", {"Fn::GetAtt": ["HostKeys", "SecretAccessKey"]}, "'\n",
+                  "AWS_REGION = '", { "Ref": "AWS::Region" }, "'\n",
+                  "PLUGINS = ['sns']\n",
+                  "AWS_SNS_TOPIC = 'alerta-topic'\n"
                 ]]}
               }
             },
@@ -214,10 +243,11 @@
           "mongo monitoring --eval 'db.addUser({user:\"", { "Ref" : "DBUsername" }, "\", pwd:\"", { "Ref" : "DBPassword" }, "\", roles:[\"readWrite\"]})'",
           " >/tmp/mongo.log 2>&1 || error_exit 'Failed to create MongoDB user'\n",
 
-          "cp -R /var/www/alerta/app/* /var/www/html\n",
+          "echo \"SECRET_KEY = '$(< /dev/urandom tr -dc A-Za-z0-9_\\!\\@\\#\\$\\%\\^\\&\\*\\(\\)-+= | head -c 32)'\" >>/etc/alertad.conf\n",
+
+          "mv /var/www/alerta/app/* /var/www/html\n",
           "rm -Rf /var/www/alerta\n",
 
-          "a2ensite alerta\n",
           "service apache2 reload\n",
 
           "cfn-signal -e $? -r 'Alerta server configuration' '", { "Ref" : "WaitHandle" }, "'\n"
@@ -260,6 +290,10 @@
     "AlertaApiEndpoint" : {
       "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "Ec2Instance", "PublicDnsName" ]}, ":8080"]] },
       "Description" : "Alerta API Endpoint"
+    },
+    "GoogleOAuthRedirectUrl": {
+      "Value": { "Fn::Join": ["", ["http://", { "Fn::GetAtt": [ "Ec2Instance", "PublicDnsName" ]}, "/oauth2callback.html"]] },
+      "Description": "Redirect URL for the Google Developers Console"
     }
   }
 }
