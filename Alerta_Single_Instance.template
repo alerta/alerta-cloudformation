@@ -203,7 +203,7 @@
             "Properties": {
                 "ImageId": "ami-f0b11187",
                 "InstanceType": {"Ref":"InstanceType"},
-                "SecurityGroupIds": [{"Ref":"Ec2SecurityGroup"}],
+                "SecurityGroupIds": [{"Ref":"InstanceSecurityGroup"}],
                 "SubnetId": {"Ref":"PublicVpcSubnet"},
                 "KeyName": {"Ref":"KeyName"},
                 "Tags": [
@@ -241,7 +241,18 @@
                 ]]}}
             }
         },
-        "Ec2SecurityGroup": {
+        "WaitHandle": {
+            "Type": "AWS::CloudFormation::WaitConditionHandle"
+        },
+        "WaitCondition": {
+            "Type": "AWS::CloudFormation::WaitCondition",
+            "DependsOn": "Ec2Instance",
+            "Properties": {
+                "Handle": {"Ref":"WaitHandle"},
+                "Timeout": "300"
+            }
+        },
+        "InstanceSecurityGroup": {
             "Type": "AWS::EC2::SecurityGroup",
             "Properties": {
                 "GroupDescription": "Enable HTTP access via port 80 and port 8080 and SSH access",
@@ -261,17 +272,6 @@
                     }
                 ]
             }
-        },
-        "WaitHandle": {
-            "Type": "AWS::CloudFormation::WaitConditionHandle"
-        },
-        "WaitCondition": {
-            "Type": "AWS::CloudFormation::WaitCondition",
-            "DependsOn": "Ec2Instance",
-            "Properties": {
-                "Handle": {"Ref":"WaitHandle"},
-                "Timeout": "300"
-            }
         }
     },
     "Outputs": {
@@ -285,4 +285,3 @@
         }
     }
 }
-
