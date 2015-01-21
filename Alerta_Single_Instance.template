@@ -1,265 +1,288 @@
 {
-  "AWSTemplateFormatVersion" : "2010-09-09",
+    "AWSTemplateFormatVersion": "2010-09-09",
 
-  "Description" : "Alerta - single instance",
+    "Description": "Alerta monitoring system - single instance",
 
-  "Parameters" : {
-
-    "KeyName": {
-        "Default": "bootstrap",
-        "Description": "Name of an existing EC2 KeyPair for SSH access",
-        "Type": "String"
-    },
-
-    "InstanceType" : {
-      "Description" : "Alerta EC2 instance type",
-      "Type" : "String",
-      "Default" : "m1.small",
-      "AllowedValues" : [
-        "t1.micro",
-        "m1.small",
-        "m1.medium",
-        "m1.large",
-        "m1.xlarge",
-        "m2.xlarge",
-        "m2.2xlarge",
-        "m2.4xlarge",
-        "m3.xlarge",
-        "m3.2xlarge",
-        "c1.medium",
-        "c1.xlarge",
-        "cc1.4xlarge",
-        "cc2.8xlarge",
-        "cg1.4xlarge"
-      ],
-      "ConstraintDescription" : "must be a valid EC2 instance type."
-    },
-
-    "DBUsername": {
-      "Default": "alerta",
-      "Description" : "Username for the MongoDB Alerta database",
-      "Type": "String",
-      "MinLength": "1",
-      "MaxLength": "16",
-      "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
-      "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters"
-    },
-
-    "DBPassword": {
-      "Default": "alerta",
-      "NoEcho": "true",
-      "Description" : "Password for the MongoDB Alerta database",
-      "Type": "String",
-      "MinLength": "1",
-      "MaxLength": "41",
-      "AllowedPattern" : "[a-zA-Z0-9]+",
-      "ConstraintDescription" : "must contain only alphanumeric characters"
-    },
-
-    "AlarmTopic": {
-      "Default": "alarm-topic",
-      "Description": "Output alarm notification topic",
-      "Type": "String",
-      "AllowedPattern": "[a-zA-Z0-9-]+"
-    },
-
-    "OperatorEmail": {
-      "Description": "email address to notify if there are operational issues",
-      "Type": "String"
-    },
-
-    "SSHLocation" : {
-      "Description" : "The IP address range that can be used to SSH to the EC2 instances",
-      "Type": "String",
-      "MinLength": "9",
-      "MaxLength": "18",
-      "Default": "0.0.0.0/0",
-      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
-      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
-    }
-  },
-
-  "Mappings" : {
-    "RegionMap" : {
-      "us-east-1"      : { "AMI" : "ami-30519058" },
-      "us-west-2"      : { "AMI" : "ami-5b58266b" },
-      "us-west-1"      : { "AMI" : "ami-957070d0" },
-      "eu-west-1"      : { "AMI" : "ami-3986524e" },
-      "ap-southeast-1" : { "AMI" : "ami-dad68888" },
-      "ap-northeast-1" : { "AMI" : "ami-cb4610ca" },
-      "ap-southeast-2" : { "AMI" : "ami-eb6d0ad1" },
-      "sa-east-1"      : { "AMI" : "ami-1189270c" }
-    }
-  },
-
-  "Resources" : {
-
-    "CfnUser" : {
-      "Type" : "AWS::IAM::User",
-      "Properties" : {
-        "Path": "/",
-        "Policies": [{
-          "PolicyName": "root",
-          "PolicyDocument": { "Statement":[
-            {
-              "Effect": "Allow",
-              "Action": "SNS:*",
-              "Resource": "*"
-            }
-          ]}
-        }]
-      }
-    },
-
-    "HostKeys" : {
-      "Type" : "AWS::IAM::AccessKey",
-      "Properties" : {
-        "UserName" : {"Ref": "CfnUser"}
-      }
-    },
-
-    "AlarmSnsTopic": {
-      "Type": "AWS::SNS::Topic",
-      "Properties": {
-        "TopicName": { "Ref": "AlarmTopic" },
-        "Subscription": [ { "Endpoint": { "Ref": "OperatorEmail" }, "Protocol": "email" } ]
-      }
-    },
-
-    "Ec2Instance": {
-      "Type": "AWS::EC2::Instance",
-      "Metadata" : {
-        "AWS::CloudFormation::Init" : {
-          "config" : {
-            "packages" : {
-              "apt" : {
-                "apache2"             : [],
-                "libapache2-mod-wsgi" : [],
-                "mongodb-server"      : []
-              },
-              "python": {
-                "alerta-server" : []
-              }
-            },
-
-            "sources" : {
-              "/var/www/alerta" : "https://github.com/alerta/angular-alerta-webui/tarball/master"
-            },
-
-            "files" : {
-              "/etc/apache2/sites-available/alerta.conf" : {
-                "content": { "Fn::Join" : ["", [
-                  "Listen 8080\n",
-                  "<VirtualHost *:8080>\n",
-                  "    WSGIDaemonProcess alerta processes=5 threads=5\n",
-                  "    WSGIScriptAlias / /var/www/html/alerta.wsgi\n",
-                  "    <Directory /var/www/html>\n",
-                  "        WSGIApplicationGroup %{GLOBAL}\n",
-                  "        Require all granted\n",
-                  "    </Directory>\n",
-                  "</VirtualHost>\n"
-                ]]}
-              },
-              "/var/www/html/alerta.wsgi" : {
-                "content": { "Fn::Join" : ["", [
-                  "from alerta.app import app as application\n"
-                ]]}
-              },
-              "/etc/alerta/alerta.conf" : {
-                "content": { "Fn::Join" : ["", [
-                  "[DEFAULT]\n",
-                  "endpoint = http://localhost:8080\n",
-                  "mongo_username = ", { "Ref": "DBUsername" }, "\n",
-                  "mongo_password = ", { "Ref": "DBPassword" }, "\n",
-                  "transport = sns\n",
-                  "output_topic = ", { "Fn::GetAtt" : ["AlarmSnsTopic", "TopicName"]}, "\n",
-                  "aws_access_key_id = ", {"Ref" : "HostKeys" }, "\n",
-                  "aws_secret_access_key = ", {"Fn::GetAtt": ["HostKeys", "SecretAccessKey"]}, "\n",
-                  "sns_region = ", { "Ref": "AWS::Region" }, "\n"
-                ]]}
-              }
-            },
-
-            "services" : {
-              "sysvinit" : {
-                "apache2" : { "enabled" : "true", "ensureRunning" : "true" },
-                "mongodb" : { "enabled" : "true", "ensureRunning" : "true" }
-              }
-            }
-          }
+    "Parameters": {
+        "KeyName": {
+            "Description": "Name of an existing EC2 KeyPair for SSH access",
+            "Type": "String",
+            "Default": "bootstrap"
+        },
+        "Stack": {
+            "Description": "Stack",
+            "Type": "String",
+            "Default": "monitoring"
+        },
+        "App": {
+            "Description": "App name",
+            "Type": "String",
+            "Default": "alerta"
+        },
+        "Stage": {
+            "Description": "Stage",
+            "Type": "String",
+            "Default": "PROD",
+            "AllowedValues": ["PROD","CODE"],
+            "ConstraintDescription": "must be a valid stage eg. PROD, CODE"
+        },
+        "InstanceType": {
+            "Description": "EC2 instance type",
+            "Type": "String",
+            "Default": "t2.micro",
+            "AllowedValues": [
+                "t2.micro",
+                "t2.small",
+                "t2.medium"
+            ],
+            "ConstraintDescription": "must be a valid EC2 instance type."
+        },
+        "GoogleOAuthClientId": {
+            "Description": "Google OAuth2 Client ID",
+            "Type": "String"
+        },
+        "GoogleOAuthClientSecret": {
+            "Description": "Google OAuth 2.0 Client Secret",
+            "Type": "String"
+        },
+        "AlarmTopic": {
+            "Default": "alarm-topic",
+            "Description": "Output alarm notification topic",
+            "Type": "String",
+            "AllowedPattern": "[a-zA-Z0-9-]+"
+        },
+        "OperatorEmail": {
+            "Description": "email address to notify if there are operational issues",
+            "Type": "String"
+        },
+        "VpcId": {
+            "Description": "ID of the VPC onto which to launch the application eg. vpc-1234abcd",
+            "Type": "String",
+            "Default": "vpc-1234abcd"
+        },
+        "PublicVpcSubnet": {
+            "Description": "Subnet to use in VPC for public internet-facing instance eg. subnet-abcd1234",
+            "Type": "String",
+            "Default": "subnet-abcd1234"
+        },
+        "SSHLocation": {
+            "Description": "The IP address range that can be used to SSH to the EC2 instances",
+            "Type": "String",
+            "MinLength": "9",
+            "MaxLength": "18",
+            "Default": "0.0.0.0/0",
+            "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+            "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
         }
-      },
-
-      "Properties": {
-        "ImageId": { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "AMI" ]},
-        "InstanceType"   : { "Ref" : "InstanceType" },
-        "SecurityGroups" : [ {"Ref" : "Ec2SecurityGroup"} ],
-        "KeyName"        : { "Ref" : "KeyName" },
-        "Tags" : [ {"Key" : "Name", "Value" : { "Ref" : "AWS::StackName"} } ],
-        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
-          "#!/bin/bash -v\n",
-
-          "function error_exit\n",
-          "{\n",
-          "  cfn-signal -e 1 -r \"$1\" '", { "Ref" : "WaitHandle" }, "'\n",
-          "  exit 1\n",
-          "}\n",
-
-          "apt-get -y install python-setuptools\n",
-          "easy_install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz\n",
-          "cfn-init --region ", { "Ref" : "AWS::Region" },
-          "    -s ", { "Ref" : "AWS::StackId" }, " -r Ec2Instance ", "|| error_exit 'Failed to run cfn-init'\n",
-
-          "while ! pgrep -fl mongodb; do echo Waiting for MongoDB to start; sleep 5; done\n",
-          "mongo monitoring --eval 'db.addUser({user:\"", { "Ref" : "DBUsername" }, "\", pwd:\"", { "Ref" : "DBPassword" }, "\", roles:[\"readWrite\"]})'",
-          " >/tmp/mongo.log 2>&1 || error_exit 'Failed to create MongoDB user'\n",
-
-          "cp -R /var/www/alerta/app/* /var/www/html\n",
-          "rm -Rf /var/www/alerta\n",
-
-          "a2ensite alerta\n",
-          "service apache2 reload\n",
-
-          "cfn-signal -e $? -r 'Alerta server configuration' '", { "Ref" : "WaitHandle" }, "'\n"
-
-        ]]}}
-      }
     },
+    "Resources": {
+        "CfnUser": {
+            "Type": "AWS::IAM::User",
+            "Properties": {
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "root",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "SNS:*",
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "HostKeys": {
+            "Type": "AWS::IAM::AccessKey",
+            "Properties": {
+                "UserName": {"Ref":"CfnUser"}
+            }
+        },
+        "AlarmSnsTopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "TopicName": {"Ref":"AlarmTopic"},
+                "Subscription": [
+                    {
+                        "Endpoint": {"Ref":"OperatorEmail"},
+                        "Protocol": "email"
+                    }
+                ]
+            }
+        },
+        "IPAddress": {
+            "Type": "AWS::EC2::EIP",
+            "Properties": {
+                "Domain": "vpc",
+                "InstanceId": {"Ref":"Ec2Instance"}
+            }
+        },
+        "Ec2Instance": {
+            "Type": "AWS::EC2::Instance",
+            "Metadata": {
+                "AWS::CloudFormation::Init": {
+                    "config": {
+                        "packages": {
+                            "apt": {
+                                "apache2": [],
+                                "libapache2-mod-wsgi": [],
+                                "mongodb-server": []
+                            }
+                        },
+                        "sources": {
+                            "/var/www/alerta": "https://github.com/alerta/angular-alerta-webui/tarball/master"
+                        },
+                        "files": {
+                            "/etc/apache2/sites-available/000-default.conf": {
+                                "content": {"Fn::Join":["",[
+                                    "Listen 8080\n","<VirtualHost *:8080>\n",
+                                    "  ServerName localhost\n",
+                                    "  WSGIDaemonProcess alerta processes=5 threads=5\n",
+                                    "  WSGIProcessGroup alerta\n",
+                                    "  WSGIScriptAlias / /var/www/api.wsgi\n",
+                                    "  WSGIPassAuthorization On\n",
+                                    "  ErrorLog ${APACHE_LOG_DIR}/error.log\n",
+                                    "  CustomLog ${APACHE_LOG_DIR}/access.log combined\n",
+                                    "</VirtualHost>\n","<VirtualHost *:80>\n",
+                                    "  ProxyPass /api http://localhost:8080\n",
+                                    "  ProxyPassReverse /api http://localhost:8080\n",
+                                    "  DocumentRoot /var/www/alerta/app\n",
+                                    "</VirtualHost>\n"
+                                ]]}
+                            },
+                            "/var/www/api.wsgi": {
+                                "content": {"Fn::Join":["",[
+                                    "#!/usr/bin/env python\n",
+                                    "from alerta.app import app as application\n"
+                                ]]}
+                            },
+                            "/etc/alertad.conf": {
+                                "content": {"Fn::Join":["",[
+                                    "SECRET_KEY='notasecret'\n",
+                                    "AUTH_REQUIRED=True\n",
+                                    "OAUTH2_CLIENT_ID='", {"Ref":"GoogleOAuthClientId"}, "'\n",
+                                    "OAUTH2_CLIENT_SECRET='", {"Ref":"GoogleOAuthClientSecret"}, "'\n",
+                                    "ALLOWED_EMAIL_DOMAINS=['guardian.co.uk']\n",
+                                    "PLUGINS=['reject','sns']\n",
+                                    "AWS_ACCESS_KEY_ID='",{"Ref":"HostKeys"},"'\n",
+                                    "AWS_SECRET_ACCESS_KEY='", {"Fn::GetAtt":["HostKeys","SecretAccessKey"]}, "'\n",
+                                    "AWS_REGION='", {"Ref":"AWS::Region"}, "'\n",
+                                    "AWS_SNS_TOPIC='", {"Ref":"AlarmTopic"}, "'\n"
+                                ]]}
+                            },
+                            "/var/www/alerta/app/config.js": {
+                                "content": {"Fn::Join":["",[
+                                    "'use strict';\n",
+                                    "angular.module('config', [])\n",
+                                    "  .constant('config', {\n",
+                                    "    'endpoint'    : '/api',\n",
+                                    "    'provider'    : 'google',\n",
+                                    "    'client_id'   : '", {"Ref":"GoogleOAuthClientId"}, "'\n","  });\n"
+                                ]]}
+                            }
+                        },
+                        "services": {
+                            "sysvinit": {
+                                "apache2": {
+                                    "enabled": "true",
+                                    "ensureRunning": "true"
+                                },
+                                "mongodb": {
+                                    "enabled": "true",
+                                    "ensureRunning": "true"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "Properties": {
+                "ImageId": "ami-f0b11187",
+                "InstanceType": {"Ref":"InstanceType"},
+                "SecurityGroupIds": [{"Ref":"Ec2SecurityGroup"}],
+                "SubnetId": {"Ref":"PublicVpcSubnet"},
+                "KeyName": {"Ref":"KeyName"},
+                "Tags": [
+                    {"Key":"Name","Value":{"Fn::Join":[":",[{"Ref":"Stage"},"alerta"]]}},
+                    {"Key":"Stage","Value":{"Ref":"Stage"}},
+                    {"Key":"Stack","Value":{"Ref":"Stack"}},
+                    {"Key":"App","Value":"alerta"}
+                ],
+                "UserData": {"Fn::Base64": {"Fn::Join": ["",[
+                    "#!/bin/bash -v\n",
 
-    "WaitHandle" : {
-      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+                    "function error_exit\n",
+                    "{\n",
+                    "  cfn-signal -e 1 -r \"$1\" '", {"Ref":"WaitHandle"}, "'\n",
+                    "  exit 1\n",
+                    "}\n",
+
+                    "apt-get -y update\n",
+                    "apt-get -y install build-essential python-dev python-setuptools python-pip\n",
+                    "easy_install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz\n",
+                    "cfn-init -s ", {"Ref":"AWS::StackId"}, " -r Ec2Instance ",
+                    "         --region     ", {"Ref":"AWS::Region"}, " || error_exit 'Failed to run cfn-init'\n",
+
+                    "adduser --system --group --disabled-password alerta\n",
+                    "pip install alerta-server\n",
+
+                    "sed -i -e s,notasecret,$(< /dev/urandom tr -dc A-Za-z0-9_\\!\\@\\#\\$\\%\\^\\&\\*\\(\\)-+= | head -c 32), /etc/alertad.conf\n",
+
+                    "echo \"ServerName localhost\" >> /etc/apache2/apache2.conf\n",
+                    "a2enmod proxy_http\n",
+                    "service apache2 reload\n",
+
+                    "# If all went well, signal success\n",
+                    "cfn-signal -e $? -r 'Server configuration' '", {"Ref":"WaitHandle"}, "'\n"
+                ]]}}
+            }
+        },
+        "Ec2SecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Enable HTTP access via port 80 and port 8080 and SSH access",
+                "VpcId": {"Ref":"VpcId"},
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "80",
+                        "ToPort": "80",
+                        "CidrIp": "0.0.0.0/0"
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "FromPort": "22",
+                        "ToPort": "22",
+                        "CidrIp": {"Ref":"SSHLocation"}
+                    }
+                ]
+            }
+        },
+        "WaitHandle": {
+            "Type": "AWS::CloudFormation::WaitConditionHandle"
+        },
+        "WaitCondition": {
+            "Type": "AWS::CloudFormation::WaitCondition",
+            "DependsOn": "Ec2Instance",
+            "Properties": {
+                "Handle": {"Ref":"WaitHandle"},
+                "Timeout": "300"
+            }
+        }
     },
-
-    "WaitCondition" : {
-      "Type" : "AWS::CloudFormation::WaitCondition",
-      "DependsOn" : "Ec2Instance",
-      "Properties" : {
-        "Handle" : {"Ref" : "WaitHandle"},
-        "Timeout" : "300"
-      }
-    },
-
-    "Ec2SecurityGroup" : {
-      "Type" : "AWS::EC2::SecurityGroup",
-      "Properties" : {
-        "GroupDescription" : "Enable HTTP access via port 80 and port 8080 and SSH access",
-        "SecurityGroupIngress" : [
-          {"IpProtocol" : "tcp", "FromPort" : "80", "ToPort" : "80", "CidrIp" : "0.0.0.0/0"},
-          {"IpProtocol" : "tcp", "FromPort" : "8080", "ToPort" : "8080", "CidrIp" : "0.0.0.0/0"},
-          {"IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Ref" : "SSHLocation"}}
-        ]
-      }
+    "Outputs": {
+        "AlertaURL": {
+            "Value": {"Fn::Join":["",["http://",{"Fn::GetAtt":["Ec2Instance","PublicDnsName"]}]]},
+            "Description": "Alerta Web UI"
+        },
+        "AlertaApiEndpoint": {
+            "Value": {"Fn::Join":["",["http://",{"Fn::GetAtt":["Ec2Instance","PublicDnsName"]},"/api"]]},
+            "Description": "Alerta API Endpoint"
+        }
     }
-  },
-
-  "Outputs" : {
-    "AlertaURL" : {
-      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "Ec2Instance", "PublicDnsName" ]}, "/"]] },
-      "Description" : "Alerta Web UI"
-    },
-    "AlertaApiEndpoint" : {
-      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "Ec2Instance", "PublicDnsName" ]}, ":8080"]] },
-      "Description" : "Alerta API Endpoint"
-    }
-  }
 }
+
