@@ -195,7 +195,7 @@
                     {"Key":"App","Value":"alerta","PropagateAtLaunch" : "true"}
                 ],
                 "NotificationConfiguration" : {
-                    "TopicARN" : "arn:aws:sns:eu-west-1:082944406014:discussion-info",
+                    "TopicARN" : {"Ref":"AlarmTopic"},
                     "NotificationTypes":  [
                         "autoscaling:EC2_INSTANCE_LAUNCH",
                         "autoscaling:EC2_INSTANCE_LAUNCH_ERROR",
