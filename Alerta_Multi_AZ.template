@@ -41,6 +41,11 @@
             "Description" : "DNS hosted zone for which A CNAME will be created. e.g. 'example.com' for alerta.example.com. Leave blank for no CNAME.",
             "Type" : "String"
         },
+        "CookieSecret": {
+            "Description": "Secret used to sign the session ID cookie ie. any random string",
+            "Type": "String",
+            "NoEcho": true
+        },
         "GoogleOAuthClientId": {
             "Description": "Google OAuth2 Client ID",
             "Type": "String"
@@ -246,7 +251,7 @@
                             },
                             "/etc/alertad.conf": {
                                 "content": {"Fn::Join":["",[
-                                    "SECRET_KEY='notasecret'\n",
+                                    "SECRET_KEY='", {"Ref":"CookieSecret"}, "'\n",
                                     "AUTH_REQUIRED=True\n",
                                     "OAUTH2_CLIENT_ID='", {"Ref":"GoogleOAuthClientId"}, "'\n",
                                     "OAUTH2_CLIENT_SECRET='", {"Ref":"GoogleOAuthClientSecret"}, "'\n",
@@ -307,8 +312,6 @@
 
                     "adduser --system --group --disabled-password alerta\n",
                     "pip install alerta-server\n",
-
-                    "sed -i -e s,notasecret,$(< /dev/urandom tr -dc A-Za-z0-9_\\!\\@\\#\\$\\%\\^\\&\\*\\(\\)-+= | head -c 32), /etc/alertad.conf\n",
 
                     "echo \"ServerName localhost\" >> /etc/apache2/apache2.conf\n",
                     "a2enmod proxy_http\n",
