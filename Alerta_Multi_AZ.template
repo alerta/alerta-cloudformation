@@ -256,6 +256,7 @@
                                     "OAUTH2_CLIENT_ID='", {"Ref":"GoogleOAuthClientId"}, "'\n",
                                     "OAUTH2_CLIENT_SECRET='", {"Ref":"GoogleOAuthClientSecret"}, "'\n",
                                     "ALLOWED_EMAIL_DOMAINS=['*']\n",
+                                    "ALLOWED_GITHUB_ORGS=['*']\n",
                                     "PLUGINS=['reject','sns']\n",
                                     "AWS_ACCESS_KEY_ID='",{"Ref":"HostKeys"},"'\n",
                                     "AWS_SECRET_ACCESS_KEY='", {"Fn::GetAtt":["HostKeys","SecretAccessKey"]}, "'\n",
