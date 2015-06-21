@@ -37,12 +37,19 @@
             ],
             "ConstraintDescription": "must be a valid EC2 instance type."
         },
-        "GoogleOAuthClientId": {
-            "Description": "Google OAuth2 Client ID",
+        "AuthProvider": {
+            "Description": "Authentication provider for user logins",
+            "Type": "String",
+            "Default": "basic",
+            "AllowedValues": ["basic","google","github","twitter"],
+            "ConstraintDescription": "Authentication provider must be one of basic, google, github or twitter"
+        },
+        "OAuthClientId": {
+            "Description": "OAuth2 Client ID for Google, GitHub or Twitter",
             "Type": "String"
         },
-        "GoogleOAuthClientSecret": {
-            "Description": "Google OAuth 2.0 Client Secret",
+        "OAuthClientSecret": {
+            "Description": "OAuth2 Client Secret for Google, GitHub or Twitter",
             "Type": "String"
         },
         "AlarmTopic": {
@@ -164,8 +171,8 @@
                                 "content": {"Fn::Join":["",[
                                     "SECRET_KEY='notasecret'\n",
                                     "AUTH_REQUIRED=True\n",
-                                    "OAUTH2_CLIENT_ID='", {"Ref":"GoogleOAuthClientId"}, "'\n",
-                                    "OAUTH2_CLIENT_SECRET='", {"Ref":"GoogleOAuthClientSecret"}, "'\n",
+                                    "OAUTH2_CLIENT_ID='", {"Ref":"OAuthClientId"}, "'\n",
+                                    "OAUTH2_CLIENT_SECRET='", {"Ref":"OAuthClientSecret"}, "'\n",
                                     "ALLOWED_EMAIL_DOMAINS=['guardian.co.uk']\n",
                                     "PLUGINS=['reject','sns']\n",
                                     "AWS_ACCESS_KEY_ID='",{"Ref":"HostKeys"},"'\n",
@@ -180,8 +187,9 @@
                                     "angular.module('config', [])\n",
                                     "  .constant('config', {\n",
                                     "    'endpoint'    : '/api',\n",
-                                    "    'provider'    : 'google',\n",
-                                    "    'client_id'   : '", {"Ref":"GoogleOAuthClientId"}, "'\n","  });\n"
+                                    "    'provider'    : '", {"Ref":"AuthProvider"}, "',\n",
+                                    "    'client_id'   : '", {"Ref":"OAuthClientId"}, "'\n",
+                                    "});\n"
                                 ]]}
                             }
                         },
@@ -222,7 +230,7 @@
                     "}\n",
 
                     "apt-get -y update\n",
-                    "apt-get -y install build-essential python-dev python-setuptools python-pip\n",
+                    "apt-get -y install build-essential python python-dev python-setuptools python-pip libffi-dev\n",
                     "easy_install https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz\n",
                     "cfn-init -s ", {"Ref":"AWS::StackId"}, " -r Ec2Instance ",
                     "         --region     ", {"Ref":"AWS::Region"}, " || error_exit 'Failed to run cfn-init'\n",
