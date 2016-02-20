@@ -1,12 +1,12 @@
 {
     "AWSTemplateFormatVersion": "2010-09-09",
 
-    "Description": "Alerta monitoring system - single instance",
+    "Description": "Alerta monitoring system",
 
     "Parameters": {
         "KeyName": {
             "Description": "Name of an existing EC2 KeyPair for SSH access",
-            "Type": "String",
+            "Type": "AWS::EC2::KeyPair::KeyName",
             "Default": "bootstrap"
         },
         "Stack": {
@@ -23,8 +23,8 @@
             "Description": "Stage",
             "Type": "String",
             "Default": "PROD",
-            "AllowedValues": ["PROD","CODE"],
-            "ConstraintDescription": "must be a valid stage eg. PROD, CODE"
+            "AllowedValues": ["PROD","DEV", "TEST"],
+            "ConstraintDescription": "must be a valid stage eg. PROD, DEV, TEST"
         },
         "InstanceType": {
             "Description": "EC2 instance type",
@@ -52,6 +52,11 @@
             "Description": "OAuth2 Client Secret for Google, GitHub or Twitter",
             "Type": "String"
         },
+        "AllowedDomain": {
+            "Description": "Allowed email domain eg. gmail.com or example.com",
+            "Type": "String",
+            "Default": "*"
+        },
         "AlarmTopic": {
             "Default": "alarm-topic",
             "Description": "Output alarm notification topic",
@@ -60,17 +65,18 @@
         },
         "OperatorEmail": {
             "Description": "email address to notify if there are operational issues",
-            "Type": "String"
+            "Type": "String",
+            "MinLength": "5",
+            "AllowedPattern": "\\w[a-zA-Z0-9_\\-\\.]*@\\w[a-zA-Z0-9\\-\\.]*",
+            "ConstraintDescription": "Must be a valid email address."
         },
         "VpcId": {
             "Description": "ID of the VPC onto which to launch the application eg. vpc-1234abcd",
-            "Type": "String",
-            "Default": "vpc-1234abcd"
+            "Type": "AWS::EC2::VPC::Id"
         },
         "PublicVpcSubnet": {
             "Description": "Subnet to use in VPC for public internet-facing instance eg. subnet-abcd1234",
-            "Type": "String",
-            "Default": "subnet-abcd1234"
+            "Type": "AWS::EC2::Subnet::Id"
         },
         "SSHLocation": {
             "Description": "The IP address range that can be used to SSH to the EC2 instances",
@@ -82,6 +88,21 @@
             "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x"
         }
     },
+
+    "Mappings" : {
+        "RegionMap" : {
+            "us-east-1" :      { "ImageId": "ami-8d4071e7" },
+            "us-west-2" :      { "ImageId": "ami-4b37d42b" },
+            "us-west-1" :      { "ImageId": "ami-bcafdedc" },
+            "eu-west-1" :      { "ImageId": "ami-36289a45" },
+            "eu-central-1" :   { "ImageId": "ami-30677d5c" },
+            "ap-southeast-1" : { "ImageId": "ami-af965fcc" },
+            "ap-northeast-1" : { "ImageId": "ami-552a2b3b" },
+            "ap-southeast-2" : { "ImageId": "ami-5195b232" },
+            "sa-east-1" :      { "ImageId": "ami-df0586b3" }
+        }
+    },
+
     "Resources": {
         "CfnUser": {
             "Type": "AWS::IAM::User",
@@ -173,7 +194,7 @@
                                     "AUTH_REQUIRED=True\n",
                                     "OAUTH2_CLIENT_ID='", {"Ref":"OAuthClientId"}, "'\n",
                                     "OAUTH2_CLIENT_SECRET='", {"Ref":"OAuthClientSecret"}, "'\n",
-                                    "ALLOWED_EMAIL_DOMAINS=['*']\n",
+                                    "ALLOWED_EMAIL_DOMAINS=['", {"Ref":"AllowedDomain"}, "']\n",
                                     "ALLOWED_GITHUB_ORGS=['*']\n",
                                     "PLUGINS=['reject','sns']\n",
                                     "AWS_ACCESS_KEY_ID='",{"Ref":"HostKeys"},"'\n",
@@ -210,7 +231,7 @@
                 }
             },
             "Properties": {
-                "ImageId": "ami-f0b11187",
+                "ImageId": { "Fn::FindInMap" : [ "RegionMap", { "Ref" : "AWS::Region" }, "ImageId" ]},
                 "InstanceType": {"Ref":"InstanceType"},
                 "SecurityGroupIds": [{"Ref":"InstanceSecurityGroup"}],
                 "SubnetId": {"Ref":"PublicVpcSubnet"},
