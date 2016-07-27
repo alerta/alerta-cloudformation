@@ -171,6 +171,7 @@
                                     "  ServerName localhost\n",
                                     "  WSGIDaemonProcess alerta processes=5 threads=5\n",
                                     "  WSGIProcessGroup alerta\n",
+                                    "  WSGIApplicationGroup %{GLOBAL}\n",
                                     "  WSGIScriptAlias / /var/www/api.wsgi\n",
                                     "  WSGIPassAuthorization On\n",
                                     "  ErrorLog ${APACHE_LOG_DIR}/error.log\n",
