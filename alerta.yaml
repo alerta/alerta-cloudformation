@@ -10,7 +10,7 @@ Metadata:
         default: "Network Configuration"
       Parameters:
       - VpcId
-      - SubnetIds
+      - Subnets
     - Label:
         default: "Amazon EC2 Configuration"
       Parameters:
@@ -42,8 +42,8 @@ Parameters:
   VpcId:
     Description: VPC ID
     Type: AWS::EC2::VPC::Id
-  SubnetIds:
-    Description: Subnets to use for web server and database
+  Subnets:
+    Description: Subnets for ELB and instances
     Type: List<AWS::EC2::Subnet::Id>
 
   InstanceType:
@@ -124,9 +124,50 @@ Parameters:
     ConstraintDescription: must be true or false.
     Default: false
 
+Mappings:
+  RegionMap:
+    'eu-west-1':
+      AMI: 'ami-0bdb1d6c15a40392c'
+
 Resources:
-  WebServer:
-    Type: AWS::EC2::Instance
+  PublicLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      SecurityGroups:
+      - !Ref LoadBalancerSecurityGroup
+      Subnets: !Ref Subnets
+      CrossZone: true
+      Listeners:
+      - Protocol: HTTP
+        LoadBalancerPort: '80'
+        InstancePort: '80'
+      HealthCheck:
+        Target: HTTP:80/api/_
+        Timeout: '5'
+        Interval: '10'
+        UnhealthyThreshold: '2'
+        HealthyThreshold: '2'
+
+  AutoscalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: !Ref Subnets
+      AvailabilityZones: !GetAZs ''
+      LaunchConfigurationName: !Ref WebServerLaunchConfig
+      MinSize: '1'
+      MaxSize: '2'
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      LoadBalancerNames:
+      - !Ref PublicLoadBalancer
+      Tags:
+      - Key: Name
+        PropagateAtLaunch: true
+        Value: Alerta
+
+  WebServerLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
     Metadata:
       AWS::CloudFormation::Init:
         config:
@@ -141,7 +182,7 @@ Resources:
             /var/www/alerta: https://github.com/alerta/angular-alerta-webui/tarball/master
 
           files:
-            /etc/apache2/sites-available/wsgi.conf:
+            /etc/httpd/conf.d/wsgi.conf:
               content: |
                 Listen 8080
                 <VirtualHost *:8080>
@@ -168,7 +209,7 @@ Resources:
                 SECRET_KEY='${SecretKey}'
                 AUTH_REQUIRED=True
                 ALLOWED_EMAIL_DOMAINS=['${AllowedDomain}']
-                DATABASE_URL=postgres://${DBUser}:${DBPassword}@${Database.Endpoint.Address}:${Database.Endpoint.Port}/${DBName}
+                DATABASE_URL='postgres://${DBUser}:${DBPassword}@${Database.Endpoint.Address}:${Database.Endpoint.Port}/${DBName}'
 
             /var/www/alerta/app/config.js:
               content: !Sub |
@@ -194,7 +235,7 @@ Resources:
                 [cfn-auto-reloader-hook]
                 triggers=post.update
                 path=Resources.EC2Instance.Metadata.AWS::CloudFormation::Init
-                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServer --region ${AWS::Region}
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServerLaunchConfig --region ${AWS::Region}
                 runas=root
               mode: '000400'
               owner: root
@@ -213,42 +254,54 @@ Resources:
                 - /etc/cfn/hooks.d/cfn-auto-reloader.conf
 
     Properties:
-      ImageId: ami-04681a1dbd79675a5
+      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
       InstanceType: !Ref InstanceType
-      SubnetId: !Ref SubnetIds
       SecurityGroups:
       - !Ref WebServerSecurityGroup
-      Tags:
-      - Key: Name
-        Value: Amazon Linux Web Server
       KeyName: !Ref KeyName
       UserData:
         'Fn::Base64': !Sub |
           #!/bin/bash -ex
           yum update -y aws-cfn-bootstrap
-          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServer --region ${AWS::Region}
-          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServer --region ${AWS::Region}
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServerLaunchConfig --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: worldwide HTTP access
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      VpcId: !Ref VpcId
 
   WebServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: HTTP and SSH access
+      GroupDescription: ELB HTTP access and restricted SSH access
       SecurityGroupIngress:
-      - CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
         FromPort: 80
-        IpProtocol: tcp
         ToPort: 80
-      - CidrIp: !Ref SSHLocation
+        SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+      - IpProtocol: tcp
         FromPort: 22
-        IpProtocol: tcp
         ToPort: 22
+        CidrIp: !Ref SSHLocation
       VpcId: !Ref VpcId
 
   DatabaseSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
     Properties:
       DBSubnetGroupDescription: database vpc subnets
-      SubnetIds: !Ref SubnetIds
+      SubnetIds: !Ref Subnets
 
   Database:
     Type: AWS::RDS::DBInstance
@@ -284,7 +337,7 @@ Resources:
 Outputs:
   AlertaURL:
     Description: Alerta Web UI
-    Value: !Sub "http://${WebServer.PublicDnsName}"
+    Value: !Sub "http://${PublicLoadBalancer.DNSName}"
   AlertaApiEndpoint:
     Description: Alerta API Endpoint
-    Value: !Sub "http://${WebServer.PublicDnsName}/api"
+    Value: !Sub "http://${PublicLoadBalancer.DNSName}/api"

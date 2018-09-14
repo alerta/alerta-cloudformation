@@ -1,7 +1,18 @@
 Alerta on AWS EC2
 =================
 
-This [CloudFormation](http://aws.amazon.com/cloudformation/aws-cloudformation-templates/) template can be used to deploy [Alerta](http://alerta.io/) on a single instance Ubuntu AMI in an AWS VPC.
+This [CloudFormation](http://aws.amazon.com/cloudformation/aws-cloudformation-templates/)
+template can be used to deploy [Alerta](http://alerta.io/) in a small
+Auto-Scaling Group behind a Elastic Load Balancer in an AWS VPC using
+RDS Postgres as the backend database.
+
+For help, join [![Gitter chat](https://badges.gitter.im/alerta/chat.png)](https://gitter.im/alerta/chat)
+
+Reqirements
+-----------
+
+ * VPC with at least two public subnets
+ * Google Tracking ID (optional)
 
 Configuration
 -------------
@@ -10,38 +21,57 @@ The following table lists the Cloudformation template parameters that can be set
 
 | Parameter  | Description |
 | ------------- | ------------- |
-| KeyName  | Name of an existing EC2 KeyPair for SSH access  |
-| Stack  | Stack name  |
-| App | Application name (default: alerta) |
-| Stage | one of `PROD`, `DEV` or `TEST` |
-| InstanceType | `t2.micro`, `t2.small` or `t2.medium` (default: `t2.micro`) |
-| AuthProvider | Authentication provider for user logins eg. `basic`, `google` or `github` |
-| OAuthClientId | OAuth2 Client ID for Google or GitHub OAuth2 providers |
-| OAuthClientSecret | OAuth2 Client Secret for Google or GitHub OAuth2 providers |
-| AllowedDomain | Allowed email domain eg. gmail.com or example.com |
-| AlarmTopic | Output alarm notification topic |
-| OperatorEmail | email address to notify if there are operational issues |
 | VpcId | ID of the VPC onto which to launch the application eg. vpc-1234abcd |
-| PublicVpcSubnet | Subnet to use in VPC for public internet-facing instance eg. subnet-abcd1234 |
+| Subnets | Public subnets to use in VPC for internet-facing ELB, instances and RDS eg. subnet-abcd1234 |
+| InstanceType | `t2.micro`, `t2.small` or `t2.medium` (default: `t2.micro`) |
+| KeyName  | Name of an existing EC2 KeyPair for SSH access  |
 | SSHLocation | IP range that can be used to SSH to the EC2 instances (default: 0.0.0.0/0) |
+| SecretKey |  |
+| AllowedDomain | Allowed email domain eg. gmail.com or example.com |
+| TrackingId |  |
+| DBName |  |
+| DBUser |  |
+| DBPassword |  |
+| DBInstanceClass |  |
+| DBAllocatedStorage |  |
+| MultiAZ |  |
 
 Deployment
 ----------
 
-Use the AWS console to upload and launch the stack or use the `aws cloudformation create-stack` command-line tool.
+Use the AWS console to upload and launch the stack or use the
+`aws cloudformation create-stack` command-line tool.
 
 Usage
 -----
 
 The Alerta Web UI is available at the following:
 
-    http://<public-ec2-ip-address>
+    http://<elb-ip-address>
 
 And the Alerta API is available at the following:
 
-    http://<public-ec2-ip-address>/api
+    http://<elb-ip-address>/api
+
+The exact values are dependent on the actual deployment and can be
+found in the CloudFormation "Outputs" tab of the AWS console once
+the Alerta stack has been successfully created.
+
+Enhancements
+-------------
+
+There are many improvements that should be made to this template before
+it is used in a production environment. These include, but are not
+limited to:
+
+ * using private VPC subnets for the web servers and database instances
+ * copying the web console static assets to S3 and serving them from Cloudfront
+ * creating an SSL certificate and using HTTPS instead of HTTP
+
+These and other enhancements are specific to every deployment environment so
+this is left as an exercise for the reader.
 
 License
 -------
 
-Copyright (c) 2015-2016 Nick Satterly. Available under the MIT License.
+Copyright (c) 2015-2016,2018 Nick Satterly. Available under the MIT License.
