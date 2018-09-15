@@ -176,7 +176,7 @@ Resources:
               httpd: []
               mod_wsgi: []
             python:
-              alerta-server: []
+              alerta-server: ["<6.0"]
               alerta: []
           sources:
             /var/www/alerta: https://github.com/alerta/angular-alerta-webui/tarball/master
