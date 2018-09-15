@@ -1,0 +1,343 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Metadata:
+  License: Apache-2.0
+
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: "Network Configuration"
+      Parameters:
+      - VpcId
+      - Subnets
+    - Label:
+        default: "Amazon EC2 Configuration"
+      Parameters:
+      - InstanceType
+      - KeyName
+      - SSHLocation
+    - Label:
+        default: "Alerta Configuration"
+      Parameters:
+      - SecretKey
+      - AllowedDomain
+      - TrackingId
+    - Label:
+        default: "Database Configuration"
+      Parameters:
+      - DBName
+      - DBUser
+      - DBPassword
+      - DBInstanceClass
+      - DBAllocatedStorage
+      - MultiAZ
+    ParameterLabels:
+      VpcId:
+        default: "Which VPC should this be deployed to?"
+
+Description: Alerta monitoring system and web console
+
+Parameters:
+  VpcId:
+    Description: VPC ID
+    Type: AWS::EC2::VPC::Id
+  Subnets:
+    Description: Subnets for ELB and instances
+    Type: List<AWS::EC2::Subnet::Id>
+
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+    - t2.micro
+    - t2.small
+    - t2.medium
+    ConstraintDescription: must be a valid EC2 instance type.
+  KeyName:
+    Description: Name of an existing EC2 KeyPair for SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: bootstrap
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: '9'
+    MaxLength: '18'
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x
+
+  SecretKey:
+    Description: Application secret key eg. any random string
+    Type: String
+  AllowedDomain:
+    Description: Allowed email domain eg. gmail.com or example.com
+    Type: String
+    Default: '*'
+  TrackingId:
+    Description: Google analytics tracking Id
+    Type: String
+
+  DBName:
+    Type: String
+    Description: Postgres database name
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters.
+    Default: monitoring
+    MaxLength: 63
+    MinLength: 1
+  DBUser:
+    Type: String
+    Description: Username for database access
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters.
+    MaxLength: 63
+    MinLength: 1
+  DBPassword:
+    Type: String
+    Description: Password for database access
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters (min. 8 characters)
+    MinLength: 8
+    NoEcho: true
+  DBInstanceClass:
+    ConstraintDescription: must select a valid database instance type.
+    Default: db.t2.micro
+    Description: The database instance type
+    Type: String
+  DBAllocatedStorage:
+    ConstraintDescription: must be between 20 and 1024Gb.
+    Default: 20
+    Description: The size of the database (Gb)
+    MaxValue: 1024
+    MinValue: 20
+    Type: Number
+  MultiAZ:
+    Type: String
+    Description: Multi-AZ master database
+    AllowedValues:
+    - true
+    - false
+    ConstraintDescription: must be true or false.
+    Default: false
+
+Mappings:
+  RegionMap:
+    'eu-west-1':
+      AMI: 'ami-0bdb1d6c15a40392c'
+
+Resources:
+  PublicLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      SecurityGroups:
+      - !Ref LoadBalancerSecurityGroup
+      Subnets: !Ref Subnets
+      CrossZone: true
+      Listeners:
+      - Protocol: HTTP
+        LoadBalancerPort: '80'
+        InstancePort: '80'
+      HealthCheck:
+        Target: HTTP:80/api/_
+        Timeout: '5'
+        Interval: '10'
+        UnhealthyThreshold: '2'
+        HealthyThreshold: '2'
+
+  AutoscalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: !Ref Subnets
+      AvailabilityZones: !GetAZs ''
+      LaunchConfigurationName: !Ref WebServerLaunchConfig
+      MinSize: '1'
+      MaxSize: '2'
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      LoadBalancerNames:
+      - !Ref PublicLoadBalancer
+      Tags:
+      - Key: Name
+        PropagateAtLaunch: true
+        Value: Alerta
+
+  WebServerLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              httpd: []
+              mod_wsgi: []
+            python:
+              alerta-server: []
+              alerta: []
+          sources:
+            /var/www/alerta: https://github.com/alerta/angular-alerta-webui/tarball/master
+
+          files:
+            /etc/httpd/conf.d/wsgi.conf:
+              content: |
+                Listen 8080
+                <VirtualHost *:8080>
+                  ServerName ec2.local.alerta.io
+                  WSGIDaemonProcess alerta processes=5 threads=5
+                  WSGIProcessGroup alerta
+                  # WSGIApplicationGroup %{GLOBAL}
+                  WSGIScriptAlias / /var/www/api.wsgi
+                  WSGIPassAuthorization On
+                </VirtualHost>
+                <VirtualHost *:80>
+                  ProxyPass /api http://localhost:8080
+                  ProxyPassReverse /api http://localhost:8080
+                  DocumentRoot /var/www/alerta/app
+                </VirtualHost>
+
+            /var/www/api.wsgi:
+              content: |
+                from alerta import app as application
+
+            /etc/alertad.conf:
+              content: !Sub |
+                DEBUG=True
+                SECRET_KEY='${SecretKey}'
+                AUTH_REQUIRED=True
+                ALLOWED_EMAIL_DOMAINS=['${AllowedDomain}']
+                DATABASE_URL='postgres://${DBUser}:${DBPassword}@${Database.Endpoint.Address}:${Database.Endpoint.Port}/${DBName}'
+
+            /var/www/alerta/app/config.js:
+              content: !Sub |
+                'use strict';
+                angular.module('config', [])
+                  .constant('config', {
+                    'endpoint'    : '/api',
+                    'provider'    : 'basic',
+                    'tracking_id' : '${TrackingId}'
+                  });
+
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                interval=1
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.EC2Instance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServerLaunchConfig --region ${AWS::Region}
+                runas=root
+              mode: '000400'
+              owner: root
+              group: root
+
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                - /etc/cfn/cfn-hup.conf
+                - /etc/cfn/hooks.d/cfn-auto-reloader.conf
+
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+      InstanceType: !Ref InstanceType
+      SecurityGroups:
+      - !Ref WebServerSecurityGroup
+      KeyName: !Ref KeyName
+      UserData:
+        'Fn::Base64': !Sub |
+          #!/bin/bash -ex
+          yum update -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServerLaunchConfig --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource AutoScalingGroup --region ${AWS::Region}
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: worldwide HTTP access
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      VpcId: !Ref VpcId
+
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ELB HTTP access and restricted SSH access
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: !Ref SSHLocation
+      VpcId: !Ref VpcId
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: database vpc subnets
+      SubnetIds: !Ref Subnets
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: !Ref DBName
+      Engine: Postgres
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: !Ref DBAllocatedStorage
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      MultiAZ: !Ref MultiAZ
+      DBSubnetGroupName:
+        Ref: DatabaseSubnetGroup
+      VPCSecurityGroups:
+      - !Ref DatabaseSecurityGroup
+      Tags:
+      - Key: "Name"
+        Value: "Alerta Database"
+    DeletionPolicy: "Snapshot"
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open database for access
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 5432
+        ToPort: 5432
+        SourceSecurityGroupId:
+          Ref: WebServerSecurityGroup
+      VpcId: !Ref VpcId
+
+Outputs:
+  AlertaURL:
+    Description: Alerta Web UI
+    Value: !Sub "http://${PublicLoadBalancer.DNSName}"
+  AlertaApiEndpoint:
+    Description: Alerta API Endpoint
+    Value: !Sub "http://${PublicLoadBalancer.DNSName}/api"
