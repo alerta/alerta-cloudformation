@@ -78,6 +78,7 @@ Parameters:
   TrackingId:
     Description: Google analytics tracking Id
     Type: String
+    Default: ''
 
   DBName:
     Type: String
