@@ -1,18 +1,17 @@
----
 language: python
-#env:
-#  global:
-#  - secure: "ePn6eMl43FKtVkVRbSU7vcGnF4zQ4v4U6fyUbLec0FcE4gVLksd5G1MVzaW7lqkka8WpN5cB58bWLWKkIkDf/RP54saADMl3gyl9XtGEd7oKP5rgPY/dD77Z9e29pDpikbUU0y3nKyojTCpHAOrvs+XDB9PP2fmayt0XiU/5yFBTYY6tCcUkOUIWW+w4BZCzvcDszGow3gGyVvOqcbDHGDTMMNT4XwPA/AqDKWRoJ+f840axz/VglPPIFUJjz1DRw+mfYc9HYIfxH90vW6bilhS5ZyEfm31MH6WVpLF/FKvOx5L7aZw+iiIzR6zNviePtbIhAs2UgFZei85xOw/j8vwB6QkzJv3FRB8ZaYuFv/y7I5OPdORkBwHtpKtsw530hSKj6X7Rk753vDezCQU9e5IgW0McZuTh/P1owp3kUaHhEWEldxs8o5uNt9dZvgPbHCL63y6R5kddaIgdogWiBZcgAboo3Vtz5npoijA0UOQk+LHOJCqYjVPsbj09g4URzW3NBh0zEbgD10gZ+6oWx/UpbIIA+/mNe3LltqePEmHjhIjkNtvOBKXGlSrBNguX/5CylAVWY80MVxpCatsordTEHjCkKRM1Wj6vkqOjZmEDcp0LhMXMb/qPntzsVSY1M6lqsj3CAHX0QRRxTPRrEnbdEf2CQpKjS6RfsnDt4Zg=" # AWS_ACCESS_KEY_ID=xyz
-#  - secure: "ldwGMqG//c0As6jBkxVcUUJCBPuABH1aDAZ3Ze7LCZ8rBlTIUikYogxD/o1BWX2m1bEb7w7A5OUM0Yr990bDnSvpwXnrMYlA9CJV+AEOq9Nw5r9OblGZLXrMnvbT0RdOUg8LaOLwGKEDj1BjzJVpg5qbJPYm3yb9iCquhZ/pk4hiI4bmTRAZtsxQubt5FNiumiX7NZDHo5jZErAYr3cRSYxvRek1sg0vH9PUqYJcucGxNsZQhVWWQve7q4V1ggAKbhVJrEd5IMOIN9dWek6h6jpXXIqtc+P05H5fbgsm8DFM41bkTev0yIyZldUFJ2uaC5K+h1L0bLYhOlkFXCKEjeUKpC90jzLOCXx1ZvzO5ZrGf1nJyMVwrK/pLir92yrLlVXn/Qd+ST0AEM7qXE+60C2dpwkYy5rM/nGtgTppA1H3bhtS1tQ0F34K2RktvoJ15QVsK5EPRFswjt+o3DT8Q6r0maA7lvxEqOKmDfr7NEqJ1w1F6uYCVjl+VQDNRteHd05gZbZHvwDXTzvDj4STtN6cts27XW8YfSjC1cmn+iHzBSQI50WUjBRGNkJKFOAzOjt5UUt4aQbd5DCiys6w1Po/ayZGLgK8ArrKBhuLdD3iREy7jYTlOY/j3/7qfC4AZ5LdrGoI8DiCVrOL9hkOp0gYPye+VXdSkoUe78fxmao=" # AWS_SECRET_ACCESS_KEY=xyz
-#  - 'AWS_DEFAULT_REGION=us-east-1'
+env:
+  global:
+  - secure: "Zg763XUTfvxQjv+GjwmoF42tsZ3P+jgO0qWrJJc8qB6GLQR9BjN6phqt9mRzpwmwhmEbninPRacStjT8iHQP/EPhc3nSRIuxwLaemFgW6tIkAidSxKuf8PrggMIDbBdl2klXt3G6fB2T8SNQ/0YeXPYESr5BiZJ4c54hVT08sHE=" # AWS_ACCESS_KEY_ID
+  - secure: "onU/+E7Hs3c738NQ9ViI6Yuj4DikukloXq9xc9qm+5ZVeULrtStT7EGURzjdZ+X8Tv3OMyhfNF8kciUDBZnaV//JtKX04dCwadNyEF2yKsrpIcIArKTdS+c+zIsnSmZrrpQfc2vKWLmAQDqLKk7KgQblVI9mIZg+25ZeQUOQmLY=" # AWS_SECRET_ACCESS_KEY
+  - AWS_DEFAULT_REGION=eu-west-1
 python:
 - '3.6'
 install:
-- 'pip install yamllint'
-- 'pip install cfn-lint'
-#- 'pip install awscli'
+- pip install yamllint
+- pip install cfn-lint
+- pip install awscli
 script:
-- 'yamllint .'
-- 'find . -type f -name ''*.yaml'' | while read file; do set -ex && cfn-lint -i E1019 E3002 E2520 W6001 -t "$file"; done;' # TODO get rid of check ignores
-- 'find . -type f -name ''*.yaml'' | while read file; do set -ex && grep -q "LICENSE-2.0" "$file"; done;'
-#- 'if [ "$TRAVIS_PULL_REQUEST" = "false" ]; then find . -type f -name ''*.yaml'' | while read file; do set -ex && aws s3 cp "$file" "s3://travis-aws-cf-templates/$TRAVIS_COMMIT/$file" && aws cloudformation validate-template --template-url "https://s3.amazonaws.com/travis-aws-cf-templates/$TRAVIS_COMMIT/$file" > /dev/null; done; fi'
+- yamllint .
+- cfn-lint alerta.yaml
+- aws cloudformation validate-template --template-body file://alerta.yaml
+- aws cloudformation validate-template --template-url https://s3-eu-west-1.amazonaws.com/alerta/public/cloudformation/alerta.yaml
