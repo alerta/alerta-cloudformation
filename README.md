@@ -8,7 +8,7 @@ RDS Postgres as the backend database.
 
 [![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home?#/stacks/new?stackName=AlertaStack&templateURL=https://s3-eu-west-1.amazonaws.com/alerta/public/cloudformation/alerta.yaml)
 
-For help, join [![Gitter chat](https://badges.gitter.im/alerta/chat.png)](https://gitter.im/alerta/chat)
+For help, join [![Slack chat](https://img.shields.io/badge/chat-on%20slack-blue?logo=slack)](https://slack.alerta.dev)
 
 Requirements
 ------------
